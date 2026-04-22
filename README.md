@@ -43,3 +43,61 @@ Bitget_chart/
 ├── README.md                       # 프로젝트 문서
 └── docker-compose.yml              # 백엔드/프론트엔드 컨테이너화 관리
 ```
+
+---
+
+## 🗺️ 프론트엔드 개발 로드맵 (Roadmap)
+
+### ✅ [Done] Step 0: 환경 구축 및 통신 테스트
+
+- [x] Vite + React + TS 환경 세팅
+- [x] Axios를 이용한 백엔드 API 데이터 수신 확인 (`index.html`, `main.tsx`, `api.ts` 연결)
+
+### 🚀 [Current] Step 1: 정적 차트 렌더링
+
+- [ ] `lightweight-charts` 엔진 초기화
+- [ ] 캔들스틱(Candlestick) 및 거래량(Volume) 차트 구현
+- [ ] 타임스케일(Time Scale) 및 다크 테마 적용
+
+### 🛠️ Step 2: 지표 및 매매 신호 레이어 추가
+
+- [ ] 일목균형표(기준선) 및 볼린저 밴드 라인 렌더링
+- [ ] `MASTER_LONG/SHORT` 매매 신호 마커(화살표) 표시
+- [ ] 가격/지표 툴팁(Tooltip) 구현
+
+### 📡 Step 3: 실시간 웹소켓(WebSocket) 연동
+
+- [ ] 백엔드 웹소켓 엔드포인트 연결
+- [ ] 실시간 시세 데이터 수신 및 차트 업데이트(`update()` 메서드)
+- [ ] 실시간 신호 발생 시 마커 즉시 갱신
+
+### 🎨 Step 4: UI 고도화 및 대시보드 기능
+
+- [ ] 지표 On/Off 토글 버튼 패널
+- [ ] 실시간 신호 알림(Alert) 기능
+- [ ] 창 크기 조절에 따른 반응형 차트 최적화
+
+---
+
+## 🚀 시작 가이드 (Quick Start)
+
+### 1. Backend 서버 실행
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+### 2. Frontend 개발 서버 실행
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 3. 접속 주소
+
+- **대시보드**: `http://localhost:5173`
+- **백엔드 API**: `http://localhost:8000/api/history`
