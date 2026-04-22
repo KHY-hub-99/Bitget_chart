@@ -9,16 +9,34 @@ from data_process.pine_data import apply_master_strategy
 from services.chat_services import convert_df_to_chart_data
 
 # 데이터 피드 인스턴스
-feed = CryptoDataFeed(method="swap", symbol="BTC/USDT:USDT", timeframe="5m")
+feed = CryptoDataFeed(method="swap", symbol="BTC/USDT:USDT", timeframe="1d")
 
 # 최신 Lifespan 방식: 서버 시작/종료 로직 관리
-@asynccontextmanager
 async def lifespan(app: FastAPI):
-    # [Startup] 서버 시작 시 데이터 로드
-    print("서버를 시작합니다. 데이터를 초기화 중...")
-    feed.initialize_data(days=90)
+    # [Startup] 서버 시작 시점
+    print("\n" + "="*50)
+    print("서버를 시작합니다. 데이터 초기화 및 전략 계산 중...")
+    
+    # 1. 데이터 수집
+    feed.initialize_data(days=365)
+    
+    # 2. 초기 전략 계산 (서버 켜자마자 상태 확인용)
+    test_df = apply_master_strategy(feed.df)
+    
+    print("-" * 50)
+    print(f"[INIT DEBUG] 초기 로드 결과")
+    print(f"수집된 캔들: {len(test_df)}개")
+    
+    # 신호 발생 여부 확인
+    long_signals = test_df['MASTER_LONG'].sum()
+    short_signals = test_df['MASTER_SHORT'].sum()
+    print(f"매매 신호 발견: LONG {long_signals}개 / SHORT {short_signals}개")
+    
+    print("모든 준비가 완료되었습니다. 이제 접속 가능합니다!")
+    print("="*50 + "\n")
+    
     yield
-    # [Shutdown] 서버 종료 시 필요한 정리 작업이 있다면 여기서 수행
+    # [Shutdown] 서버 종료 시점
     print("서버를 종료합니다.")
 
 app = FastAPI(title="Crypto Trading Dashboard API", lifespan=lifespan)
