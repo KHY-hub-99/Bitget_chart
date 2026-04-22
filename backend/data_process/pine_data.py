@@ -1,3 +1,4 @@
+import os
 import sys
 import pandas as pd
 import pandas_ta as ta
@@ -98,6 +99,7 @@ if __name__ == "__main__":
     
     # 전략 실행
     result_df = apply_master_strategy(feed.df)
+    result_df.to_excel("test.xlsx")
     
     print(f"전략 연산 완료: {len(result_df)}개 행")
     print(result_df[['kijun', 'MASTER_LONG', 'TOP_DETECTED']].tail())
