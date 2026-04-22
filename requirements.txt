@@ -1,0 +1,5 @@
+ccxt
+pandas_ta
+pandas
+plotly
+pyprojroot

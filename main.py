@@ -1,7 +1,7 @@
 # 1. 데이터 가져오기
 import pandas as pd
 from data_load import CryptoDataFeed
-from trans_pine_chart import apply_master_strategy # C 대신 실제 만든 함수명으로 수정
+from backend.data_process.trans_pine_chart import apply_master_strategy # C 대신 실제 만든 함수명으로 수정
 
 # 터미널에서 표가 잘리지 않게 출력하기 위한 pandas 설정
 pd.set_option('display.max_columns', None)

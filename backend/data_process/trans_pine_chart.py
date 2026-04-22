@@ -108,5 +108,9 @@ def apply_master_strategy(
     df['MASTER_SHORT'] = short_sig                       # 빨간색 아래 화살표 (강력 매도)
 
     df.fillna(False, inplace=True)
+    
+    signal_columns = ['TOP_DETECTED', 'BOTTOM_DETECTED', 'MASTER_LONG', 'MASTER_SHORT']
+    df[signal_columns] = df[signal_columns].fillna(False)
+    df.fillna(0, inplace=True)
 
     return df

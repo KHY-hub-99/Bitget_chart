@@ -1,8 +1,12 @@
+import sys
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
-from data_load import CryptoDataFeed
-from trans_pine_chart import apply_master_strategy
+from pyprojroot import here
+root = str(here())
+sys.path.append(root)
+from backend.data_process.data_load import CryptoDataFeed
+from backend.data_process.trans_pine_chart import apply_master_strategy
 
 def plot_tradingview_chart(df, symbol="BTC/USDT:USDT"):
     """
