@@ -106,8 +106,6 @@ def apply_master_strategy(
     df['BOTTOM_DETECTED'] = bullish_div | extreme_bottom # 초록 다이아몬드 (저점 징후)
     df['MASTER_LONG'] = long_sig                         # 초록색 위 화살표 (강력 매수)
     df['MASTER_SHORT'] = short_sig                       # 빨간색 아래 화살표 (강력 매도)
-
-    df.fillna(False, inplace=True)
     
     signal_columns = ['TOP_DETECTED', 'BOTTOM_DETECTED', 'MASTER_LONG', 'MASTER_SHORT']
     df[signal_columns] = df[signal_columns].fillna(False)
