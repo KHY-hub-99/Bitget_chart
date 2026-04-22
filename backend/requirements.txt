@@ -1,6 +1,6 @@
-ccxt
-pandas_ta
+fastapi
+uvicorn
 pandas
-plotly
-pyprojroot
-lightweight-charts
+pandas-ta
+ccxt
+python-dotenv
