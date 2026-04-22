@@ -43,17 +43,25 @@ def apply_master_strategy(
     cloud_bottom = np.minimum(df['senkou_a'], df['senkou_b'])
 
     # 보조지표 계산 (MACD, RSI, MFI, 볼린저 밴드)
-    # MACD 계산 (고정값 12, 26, 9 사용)
     # pandas-ta의 macd는 여러 컬럼(MACD선, 시그널선, 히스토그램)을 가진 DataFrame을 반환합니다.
     macd = df.ta.macd(fast=12, slow=26, signal=9)
     macd_line = macd['MACD_12_26_9']     # MACD 라인
     signal_line = macd['MACDs_12_26_9']  # Signal 라인
 
-    # RSI와 MFI 계산 (파라미터 변수 활용)
+    # RSI와 MFI 계산
     rsi = df.ta.rsi(length=rsi_len)
     mfi = df.ta.mfi(length=mfi_len)
 
-    # 볼린저 밴드 계산 (에러 방어 로직 적용!)
+    # ==========================================
+    # 시각화(make_chart.py) 도구가 이 컬럼명들을 찾아 화면에 그릴 수 있게 됩니다.
+    # ==========================================
+    df['RSI_14'] = rsi
+    df['MFI_14'] = mfi
+    df['MACD_line'] = macd_line     # 추후 MACD 차트 추가를 대비해 저장
+    df['MACD_signal'] = signal_line # 추후 MACD 차트 추가를 대비해 저장
+    # ==========================================
+
+    # 볼린저 밴드 계산
     bb = df.ta.bbands(length=bb_len, std=bb_mult)
 
     # 라이브러리 버전에 상관없이 상단/하단 밴드를 정확히 잡아냅니다.
@@ -62,18 +70,20 @@ def apply_master_strategy(
 
     bb_upper = bb[bbu_col]
     bb_lower = bb[bbl_col]
+    
+    df['BB_upper'] = bb_upper
+    df['BB_lower'] = bb_lower
+    
+    bbm_col = [col for col in bb.columns if col.startswith('BBM')][0]
+    df['BB_middle'] = bb[bbm_col]
 
     # 2-3. 거래량 확인 (Volume Confirmation)
-    # 파인 스크립트의 ta.sma(volume, 20)은 파이썬의 rolling(20).mean()으로 직관적 번역이 가능합니다.
     vol_sma = df['volume'].rolling(20).mean()
     vol_confirm = df['volume'] > (vol_sma * vol_mult)
 
     # === [3. 신호 로직] ===
 
     # A. 고점/저점 정밀 타격 (다이버전스 + 극한 과매수/도)
-    
-    # 1. 다이버전스를 구하기 위한 과거 5봉 데이터 전처리
-    # Pine Script의 ta.highest(high, 5)[1] -> "어제(shift(1)) 기준 과거 5일치(rolling(5))의 최댓값(max)"
     high_prev_5_max = df['high'].shift(1).rolling(5).max()
     low_prev_5_min = df['low'].shift(1).rolling(5).min()
 
@@ -81,34 +91,30 @@ def apply_master_strategy(
     rsi_prev_5_min = rsi.shift(1).rolling(5).min()
 
     # 2. 다이버전스 판별
-    # 파이썬 pandas에서는 여러 조건을 묶을 때 'and' 대신 '&' 기호를 사용하고, 각 조건을 괄호()로 묶어야 합니다.
     bearish_div = (df['high'] > high_prev_5_max) & (rsi < rsi_prev_5_max) & (rsi > 65)
     bullish_div = (df['low'] < low_prev_5_min) & (rsi > rsi_prev_5_min) & (rsi < 35)
 
-    # 3. 극한 타점 판별 (볼린저 밴드 이탈 + RSI/MFI 동시 조건 만족)
+    # 3. 극한 타점 판별
     extreme_top = (df['high'] >= bb_upper) & (rsi > 75) & (mfi > 80)
     extreme_bottom = (df['low'] <= bb_lower) & (rsi < 25) & (mfi < 20)
 
     # B. 추세 진입 (MASTER 신호)
     
-    # 1. 크로스오버/크로스언더 논리적 구현
-    # 상향 돌파 (Crossover): 오늘 종가는 구름대 상단보다 크고(&), 어제 종가는 어제 구름대 상단보다 작거나 같다.
+    # 1. 크로스오버/크로스언더 판별
     close_cross_cloud_top = (df['close'] > cloud_top) & (df['close'].shift(1) <= cloud_top.shift(1))
-
-    # 하향 이탈 (Crossunder): 오늘 종가는 구름대 하단보다 작고(&), 어제 종가는 어제 구름대 하단보다 크거나 같다.
     close_cross_cloud_bottom = (df['close'] < cloud_bottom) & (df['close'].shift(1) >= cloud_bottom.shift(1))
 
-    # 2. 최종 MASTER 신호 조합 (돌파 + MACD 방향 + 거래량 조건 동시 만족)
+    # 2. 최종 MASTER 신호 조합
     long_sig = close_cross_cloud_top & (macd_line > signal_line) & vol_confirm
     short_sig = close_cross_cloud_bottom & (macd_line < signal_line) & vol_confirm
 
-    df['TOP_DETECTED'] = bearish_div | extreme_top       # 빨간 다이아몬드 (고점 징후)
-    df['BOTTOM_DETECTED'] = bullish_div | extreme_bottom # 초록 다이아몬드 (저점 징후)
-    df['MASTER_LONG'] = long_sig                         # 초록색 위 화살표 (강력 매수)
-    df['MASTER_SHORT'] = short_sig                       # 빨간색 아래 화살표 (강력 매도)
+    df['TOP_DETECTED'] = bearish_div | extreme_top       
+    df['BOTTOM_DETECTED'] = bullish_div | extreme_bottom 
+    df['MASTER_LONG'] = long_sig                         
+    df['MASTER_SHORT'] = short_sig                       
     
+    # 신호 컬럼 결측치 처리
     signal_columns = ['TOP_DETECTED', 'BOTTOM_DETECTED', 'MASTER_LONG', 'MASTER_SHORT']
     df[signal_columns] = df[signal_columns].fillna(False)
-    df.fillna(0, inplace=True)
 
     return df

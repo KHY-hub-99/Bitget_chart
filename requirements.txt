@@ -3,3 +3,4 @@ pandas_ta
 pandas
 plotly
 pyprojroot
+lightweight_charts
