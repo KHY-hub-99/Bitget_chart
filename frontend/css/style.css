@@ -1,0 +1,505 @@
+/* ============================================================
+   MASTER STRATEGY — Dark Trading Terminal
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Rajdhani:wght@400;500;600;700&display=swap");
+
+:root {
+  --bg-base: #080c10;
+  --bg-panel: #0d1117;
+  --bg-card: #111820;
+  --bg-hover: #1a2433;
+
+  --border: #1e2d3d;
+  --border-light: #243447;
+
+  --accent-cyan: #00e5ff;
+  --accent-green: #26a69a;
+  --accent-red: #ef5350;
+  --accent-long: #00e5ff;
+  --accent-short: #ff6d00;
+  --accent-top: #ff1744;
+  --accent-bot: #76ff03;
+  --accent-purple: #e040fb;
+  --accent-gold: #f5c518;
+
+  --text-primary: #e8edf3;
+  --text-muted: #4a6070;
+  --text-dim: #2a3a4a;
+
+  --font-mono: "Space Mono", monospace;
+  --font-ui: "Rajdhani", sans-serif;
+
+  --chart-bg: #080c10;
+  --header-h: 56px;
+  --status-h: 28px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* ── 헤더 ─────────────────────────────────────────── */
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-h);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 20px;
+  z-index: 100;
+  backdrop-filter: blur(12px);
+}
+
+.header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.logo {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  letter-spacing: 2px;
+}
+.logo-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 4px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex: 1;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.control-group label {
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+select,
+input[type="number"] {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  outline: none;
+  transition: border-color 0.2s;
+  height: 28px;
+}
+select:hover,
+input[type="number"]:hover {
+  border-color: var(--border-light);
+}
+select:focus,
+input[type="number"]:focus {
+  border-color: var(--accent-cyan);
+}
+input[type="number"] {
+  width: 70px;
+}
+
+/* 타임프레임 버튼 */
+.tf-buttons {
+  display: flex;
+  gap: 3px;
+}
+
+.tf-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+  height: 28px;
+}
+.tf-btn:hover {
+  border-color: var(--border-light);
+  color: var(--text-primary);
+}
+.tf-btn.active {
+  background: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+  color: #000;
+  font-weight: 700;
+}
+
+/* LOAD 버튼 */
+.load-btn {
+  background: transparent;
+  border: 1px solid var(--accent-cyan);
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  padding: 6px 20px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.load-btn:hover {
+  background: var(--accent-cyan);
+  color: #000;
+}
+.load-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 스피너 */
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+.hidden {
+  display: none !important;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 헤더 우측 가격 */
+.header-right {
+  flex-shrink: 0;
+}
+
+.price-display {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+#currentPrice {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 1px;
+}
+.price-change {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.price-change.up {
+  color: var(--accent-green);
+}
+.price-change.dn {
+  color: var(--accent-red);
+}
+
+/* ── 상태바 ───────────────────────────────────────── */
+.status-bar {
+  position: fixed;
+  top: var(--header-h);
+  left: 0;
+  right: 0;
+  height: var(--status-h);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 12px;
+  z-index: 99;
+}
+
+#statusMsg {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.signal-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  padding: 2px 8px;
+  border-radius: 2px;
+}
+.signal-badge.long {
+  background: var(--accent-long);
+  color: #000;
+}
+.signal-badge.short {
+  background: var(--accent-short);
+  color: #000;
+}
+.signal-badge.top {
+  background: var(--accent-top);
+  color: #fff;
+}
+.signal-badge.bot {
+  background: var(--accent-bot);
+  color: #000;
+}
+
+/* ── 메인 레이아웃 ────────────────────────────────── */
+.main-layout {
+  position: fixed;
+  top: calc(var(--header-h) + var(--status-h));
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 0;
+}
+
+/* 차트 컬럼 */
+.chart-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.chart-block {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+  min-height: 0;
+}
+.chart-block:last-child {
+  border-bottom: none;
+}
+
+.chart-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.chart-container {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── 사이드 패널 ─────────────────────────────────── */
+.side-panel {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-panel);
+}
+
+.panel-block {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 14px;
+  overflow: auto;
+}
+.panel-block:last-child {
+  flex: 1;
+  overflow: auto;
+}
+
+.panel-title {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 2.5px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+/* 레전드 */
+.legend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+/* 신호 로그 */
+.signal-log {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.log-empty {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.log-entry {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 4px 7px;
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.log-entry.long {
+  background: rgba(0, 229, 255, 0.07);
+  border-left: 2px solid var(--accent-long);
+}
+.log-entry.short {
+  background: rgba(255, 109, 0, 0.07);
+  border-left: 2px solid var(--accent-short);
+}
+.log-entry.top {
+  background: rgba(255, 23, 68, 0.07);
+  border-left: 2px solid var(--accent-top);
+}
+.log-entry.bot {
+  background: rgba(118, 255, 3, 0.07);
+  border-left: 2px solid var(--accent-bot);
+}
+
+.log-entry .log-sig {
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.log-entry .log-time {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+.log-entry .log-price {
+  color: var(--text-primary);
+}
+
+/* 최신값 */
+.latest-values {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.val-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.val-row span:first-child {
+  color: var(--text-muted);
+}
+.val-row span:last-child {
+  color: var(--text-primary);
+}
+
+/* 스크롤바 */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+/* ── 오버레이 / 에러 ─────────────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-red);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 10px 16px;
+  border-radius: 3px;
+  z-index: 999;
+  animation: slideIn 0.3s ease;
+  max-width: 340px;
+}
+.toast.info {
+  border-left-color: var(--accent-cyan);
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
