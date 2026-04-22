@@ -7,25 +7,27 @@ root = here()
 sys.path.append(root)
 from backend.data_process.load_data import CryptoDataFeed
 from backend.data_process.pine_data import apply_master_strategy
+from backend.api.chart_api import router as chart_router
 
-app = FastAPI()
+app = FastAPI(title="Master Strategy API")
 
-# 프론트엔드(HTML)가 백엔드에 접근할 수 있도록 허용
+# 프론트엔드(HTML/JS)에서 API에 접근할 수 있도록 CORS 설정 허용
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # 실제 배포 시에는 특정 주소만 허용
+    allow_origins=["*"],  # 로컬 테스트 시에는 모두 허용, 배포 시 특정 도메인으로 제한
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.get("/api/chart")
-async def get_chart():
-    feed = CryptoDataFeed()
-    feed.initialize_data(days=10)
-    result_df = apply_master_strategy(feed.df)
-    
-    # JS 차트가 읽을 수 있도록 Unix Timestamp(초 단위)로 변환
-    chart_data = result_df.reset_index()
-    chart_data['time'] = chart_data['time'].apply(lambda x: int(x.timestamp()))
-    
-    return chart_data.to_dict(orient='records')
+# 차트 API 라우터 등록
+app.include_router(chart_router)
+
+@app.get("/")
+async def root():
+    return {"message": "Bitget Master Strategy Backend is running!"}
+
+if __name__ == "__main__":
+    import uvicorn
+    # 서버 실행: http://localhost:8000
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
