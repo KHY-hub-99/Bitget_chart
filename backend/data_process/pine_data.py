@@ -2,11 +2,7 @@ import sys
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
-from pyprojroot import here
-# 루트 경로 설정
-root = str(here())
-sys.path.append(root)
-from app.data_process.load_data import CryptoDataFeed
+from data_process.load_data import CryptoDataFeed
 
 def apply_master_strategy(
     df,

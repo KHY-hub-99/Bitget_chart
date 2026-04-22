@@ -2,15 +2,16 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import asyncio
+import uvicorn
 
-from app.data_process.load_data import CryptoDataFeed
-from app.data_process.pine_data import apply_master_strategy
-from app.services.chat_services import convert_df_to_chart_data
+from data_process.load_data import CryptoDataFeed
+from data_process.pine_data import apply_master_strategy
+from services.chat_services import convert_df_to_chart_data
 
 # 데이터 피드 인스턴스
 feed = CryptoDataFeed(method="swap", symbol="BTC/USDT:USDT", timeframe="5m")
 
-# 🌟 최신 Lifespan 방식: 서버 시작/종료 로직 관리
+# 최신 Lifespan 방식: 서버 시작/종료 로직 관리
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # [Startup] 서버 시작 시 데이터 로드
@@ -33,8 +34,22 @@ app.add_middleware(
 @app.get("/api/history")
 async def get_history():
     """과거 차트 데이터 및 지표 전체 반환"""
+    print("\n" + "="*50)
+    print("[DEBUG] 데이터 요청 수신")
     processed_df = apply_master_strategy(feed.df)
     chart_json = convert_df_to_chart_data(processed_df)
+    
+    print(f"캔들 데이터: {len(chart_json['candles'])}개")
+    print(f"거래량 데이터: {len(chart_json['volumes'])}개")
+    print(f"지표 데이터 (기준선): {len(chart_json['indicators']['kijun'])}개")
+    print(f"매매 신호(Markers): {len(chart_json['markers'])}개")
+    
+    if len(chart_json['markers']) > 0:
+        print(f"최근 발생 신호 샘플: {chart_json['markers'][-1]}") # 가장 최근 신호 하나 출력
+    
+    print(f"마지막 캔들 시간: {chart_json['candles'][-1]['time']}")
+    print("="*50 + "\n")
+    
     return chart_json
 
 @app.websocket("/ws/chart")
@@ -56,5 +71,5 @@ async def websocket_endpoint(websocket: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
-    # 포트 충돌 방지를 위해 포트를 지정하거나 0.0.0.0으로 열기
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    # "app.main:app"에서 "main:app"으로 변경
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
