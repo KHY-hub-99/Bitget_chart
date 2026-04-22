@@ -36,9 +36,10 @@ Bitget_chart/
 │   │   └── api.ts                  # 백엔드 Axios 통신 정의
 │   ├── index.html
 │   ├── package.json
-│   └── vite.config.ts
+│   ├── vite.config.ts
+    └── Dockerfile                  # 프론트엔드 컨테이너 설정
 │
 ├── .gitignore                      # Git 제외 설정
-└── README.md                       # 프로젝트 문서
+├── README.md                       # 프로젝트 문서
 └── docker-compose.yml              # 백엔드/프론트엔드 컨테이너화 관리
 ```
