@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Bitget Master Strategy Chart</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #1e222d;
+        color: #d1d4dc;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+          Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+      }
+      #header {
+        padding: 15px 20px;
+        background-color: #131722;
+        border-bottom: 1px solid #2b3139;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        color: #e0e3eb;
+      }
+      #chart-container {
+        width: 100vw;
+        height: calc(100vh - 50px);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="header">
+      <h1>BTC/USDT - Master Strategy Dashboard</h1>
+      <div id="loading" style="color: #f0b90b">데이터를 불러오는 중...</div>
+    </div>
+
+    <div id="chart-container"></div>
+
+    <script>
+      // 1. 차트 컨테이너 및 옵션 초기화
+      const chartProperties = {
+        layout: { background: { color: "#1E222D" }, textColor: "#D1D4DC" },
+        grid: {
+          vertLines: { color: "#2B3139" },
+          horzLines: { color: "#2B3139" },
+        },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        timeScale: { timeVisible: true, secondsVisible: false },
+      };
+      const chart = LightweightCharts.createChart(
+        document.getElementById("chart-container"),
+        chartProperties,
+      );
+
+      // 2. 메인 캔들스틱 시리즈 추가
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: "#26A69A",
+        downColor: "#EF5350",
+        borderVisible: false,
+        wickUpColor: "#26A69A",
+        wickDownColor: "#EF5350",
+      });
+
+      // 3. 백엔드 API 데이터 호출 (FastAPI 서버)
+      async function fetchChartData() {
+        try {
+          // 백엔드 서버(localhost:8000)로 데이터 요청
+          const response = await fetch(
+            "http://localhost:8000/api/chart?symbol=BTC/USDT:USDT&timeframe=1d&days=90",
+          );
+          const data = await response.json();
+
+          // 4. 캔들 데이터 매핑
+          const candleData = data.map((row) => ({
+            time: row.time,
+            open: row.open,
+            high: row.high,
+            low: row.low,
+            close: row.close,
+          }));
+          candleSeries.setData(candleData);
+
+          // 5. 매매 신호 마커 추가 (MASTER LONG / SHORT)
+          let markers = [];
+          data.forEach((row) => {
+            if (row.MASTER_LONG) {
+              markers.push({
+                time: row.time,
+                position: "belowBar",
+                color: "#26A69A",
+                shape: "arrowUp",
+                text: "LONG",
+              });
+            } else if (row.MASTER_SHORT) {
+              markers.push({
+                time: row.time,
+                position: "aboveBar",
+                color: "#EF5350",
+                shape: "arrowDown",
+                text: "SHORT",
+              });
+            } else if (row.BOTTOM_DETECTED) {
+              markers.push({
+                time: row.time,
+                position: "belowBar",
+                color: "#4CAF50",
+                shape: "circle",
+                text: "BTM",
+              });
+            } else if (row.TOP_DETECTED) {
+              markers.push({
+                time: row.time,
+                position: "aboveBar",
+                color: "#F44336",
+                shape: "circle",
+                text: "TOP",
+              });
+            }
+          });
+          candleSeries.setMarkers(markers);
+
+          document.getElementById("loading").style.display = "none";
+        } catch (error) {
+          console.error("데이터를 가져오는 중 에러 발생:", error);
+          document.getElementById("loading").innerText =
+            "데이터 로딩 실패! 백엔드 서버가 켜져 있는지 확인하세요.";
+          document.getElementById("loading").style.color = "#EF5350";
+        }
+      }
+
+      // 함수 실행
+      fetchChartData();
+
+      // 반응형 창 크기 조절
+      window.addEventListener("resize", () => {
+        chart.applyOptions({
+          width: document.getElementById("chart-container").clientWidth,
+          height: document.getElementById("chart-container").clientHeight,
+        });
+      });
+    </script>
+  </body>
+</html>

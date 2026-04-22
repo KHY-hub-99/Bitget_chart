@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pyprojroot import here
 # 루트 설정
-root = here()
+root = str(here())
 sys.path.append(root)
 from backend.data_process.load_data import CryptoDataFeed
 from backend.data_process.pine_data import apply_master_strategy
