@@ -14,34 +14,31 @@
 ## 📂 폴더 구조 (Folder Structure)
 
 ```text
-crypto-trading-dashboard/
-├── backend/                        # Python 기반 FastAPI 서버
-│   ├── app/
-│   │   ├── main.py                 # API 서버 엔트리포인트 & 라우팅
-│   │   ├── data_process/           # [Core] 데이터 수집 및 전략 로직
-│   │   │   ├── load_data.py        # ccxt 기반 데이터 피드 클래스
-│   │   │   └── pine_data.py        # 마스터 전략 연산 로직
-│   │   ├── services/
-│   │   │   └── chart_service.py    # DF 데이터를 차트용 JSON(Time/Value)으로 변환
-│   │   └── utils/
-│   │       └── config.py           # 심볼, 타임프레임, API 설정
-│   ├── requirements.txt            # 의존성 패키지 (ccxt, pandas-ta, fastapi 등)
-│   └── .env                        # 환경 변수 관리
+Bitget_chart/
+├── backend/                        # [Python] FastAPI 서버
+│   ├── main.py                     # API 서버 엔트리포인트 & 실시간 로직
+│   ├── data_process/               # 핵심 연산 로직
+│   │   ├── __init__.py
+│   │   ├── load_data.py            # 데이터 수집 (Bitget)
+│   │   └── pine_data.py            # 전략 계산 (Master Strategy)
+│   ├── services/                   # 데이터 가공
+│   │   ├── __init__.py
+│   │   └── chart_service.py        # DF -> Chart JSON 변환
+│   ├── requirements.txt            # 필수 패키지 목록
+│   ├── .env                        # API Key 등 환경 변수
+│   └── Dockerfile                  # 백엔드 컨테이너 설정
 │
-├── frontend/                       # React (Vite) + TypeScript
+├── frontend/                       # [React] Vite + TS
 │   ├── src/
-│   │   ├── components/
-│   │   │   └── Chart/
-│   │   │       ├── TradingChart.tsx   # Lightweight Charts 메인 컴포넌트
-│   │   │       └── IndicatorPanel.tsx # 지표 On/Off 토글 UI
-│   │   ├── hooks/
-│   │   │   ├── useChartData.ts     # API 데이터 Fetching 커스텀 훅
-│   │   │   └── useWebSocket.ts     # 실시간 시세 업데이트 훅
-│   │   ├── types/
-│   │   │   └── chart.ts            # 차트 데이터 인터페이스 정의
-│   │   └── App.tsx                 # 메인 레이아웃
+│   │   ├── main.tsx                # 엔트리 포인트
+│   │   ├── App.tsx                 # 메인 화면 및 데이터 흐름 제어
+│   │   ├── TradingChart.tsx        # [Core] Lightweight Charts 엔진
+│   │   └── api.ts                  # 백엔드 Axios 통신 정의
+│   ├── index.html
 │   ├── package.json
 │   └── vite.config.ts
 │
+├── .gitignore                      # Git 제외 설정
+└── README.md                       # 프로젝트 문서
 └── docker-compose.yml              # 백엔드/프론트엔드 컨테이너화 관리
 ```
