@@ -6,7 +6,7 @@ from pyprojroot import here
 # 루트 경로 설정
 root = str(here())
 sys.path.append(root)
-from backend.app.data_process.load_data import CryptoDataFeed #
+from backend.app.data_process.load_data import CryptoDataFeed
 
 def apply_master_strategy(
     df,
