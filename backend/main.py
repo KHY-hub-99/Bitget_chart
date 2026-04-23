@@ -9,7 +9,7 @@ from data_process.pine_data import apply_master_strategy
 from services.chat_services import convert_df_to_chart_data
 
 # 데이터 피드 인스턴스
-feed = CryptoDataFeed(method="swap", symbol="BTC/USDT:USDT", timeframe="1d")
+feed = CryptoDataFeed(method="swap", symbol="BTC/USDT:USDT", timeframe="5m")
 
 # 최신 Lifespan 방식: 서버 시작/종료 로직 관리
 async def lifespan(app: FastAPI):
@@ -18,7 +18,7 @@ async def lifespan(app: FastAPI):
     print("서버를 시작합니다. 데이터 초기화 및 전략 계산 중...")
     
     # 1. 데이터 수집
-    feed.initialize_data(days=365)
+    feed.initialize_data(days=180)
     
     # 2. 초기 전략 계산 (서버 켜자마자 상태 확인용)
     test_df = apply_master_strategy(feed.df)
