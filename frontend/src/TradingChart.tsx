@@ -7,8 +7,8 @@ import {
   HistogramSeries,
   LineSeries,
   AreaSeries,
-  createSeriesMarkers,
   LineStyle,
+  createSeriesMarkers, // 🎯 [V5 핵심] 마커 플러그인 임포트!
   IChartApi,
   ISeriesApi,
 } from "lightweight-charts";
@@ -27,18 +27,25 @@ interface ChartDataProps {
     rsi: boolean;
     macd: boolean;
   };
+  symbol: string;
 }
 
-const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
+const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRefs = useRef<{ [key: string]: ISeriesApi<any> }>({});
+  const seriesRefs = useRef<{ [key: string]: any }>({}); // 타입 유연성을 위해 any 처리
 
   const settingsRef = useRef(settings);
+  const symbolRef = useRef(symbol);
+
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  useEffect(() => {
+    symbolRef.current = symbol;
+  }, [symbol]);
 
   const processData = (items: any[], isCandle = false) => {
     if (!items || !Array.isArray(items)) return [];
@@ -60,12 +67,10 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
         background: { type: ColorType.Solid, color: "#0b0e11" },
         textColor: "#929aa5",
         fontSize: 12,
-        // 🎯 차트 내부 폰트도 깔끔한 Sans-serif로 고정
         fontFamily: "'Inter', sans-serif",
       },
       localization: {
         locale: "ko-KR",
-        // 🎯 하단 시간 박스 포맷 (2026-04-25 06:15)
         timeFormatter: (timestamp: number) => {
           const d = new Date(timestamp * 1000);
           return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -85,7 +90,6 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
         timeVisible: true,
         secondsVisible: false,
         barSpacing: 12,
-        // 🎯 [수정] 우측에 30개 캔들 정도의 빈 공간을 강제로 만듭니다.
         rightOffset: 30,
         shiftVisibleRangeOnNewBar: true,
       },
@@ -94,6 +98,8 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
     });
 
     const s: any = {};
+
+    // 🎯 [V5 핵심] 최신 통합 API 방식으로 복귀 (addSeries 사용)
     s.candle = chart.addSeries(CandlestickSeries, {
       upColor: "#2ebd85",
       downColor: "#f6465d",
@@ -101,6 +107,10 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
       wickUpColor: "#2ebd85",
       wickDownColor: "#f6465d",
     });
+
+    // 🎯 [V5 핵심] 마커 플러그인을 생성하여 s 객체에 저장해 둡니다.
+    s.markersPlugin = createSeriesMarkers(s.candle);
+
     s.kijun = chart.addSeries(LineSeries, { color: "#f0b90b", lineWidth: 2 });
     s.senkou_a = chart.addSeries(LineSeries, {
       color: "rgba(46, 189, 133, 0.4)",
@@ -112,14 +122,13 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
     });
     s.cloud = chart.addSeries(AreaSeries, {
       lineColor: "transparent",
-      // 위쪽 선(Senkou A)의 색상
       topColor: "rgba(46, 189, 133, 0.25)",
-      // 아래쪽 색상을 '투명'하게 처리하여 바닥까지 꽉 차는 현상을 막습니다.
       bottomColor: "rgba(11, 14, 17, 0)",
       lineWidth: 0,
-      priceLineVisible: false, // 우측 가격축에 현재가 선 표시 안함
-      baseValue: { type: "price", price: 0 }, // 기준선을 0으로 설정
+      priceLineVisible: false,
+      baseValue: { type: "price", price: 0 },
     });
+
     s.bb_upper = chart.addSeries(LineSeries, {
       color: "rgba(33, 150, 243, 0.4)",
       lineStyle: LineStyle.Dashed,
@@ -135,6 +144,7 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
       lineStyle: LineStyle.Dashed,
       lineWidth: 1,
     });
+
     s.rsi = chart.addSeries(LineSeries, {
       color: "#9c27b0",
       lineWidth: 2,
@@ -151,7 +161,6 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
       priceScaleId: "vol_p",
     });
 
-    // 레이아웃 배분
     chart
       .priceScale("right")
       .applyOptions({ scaleMargins: { top: 0.05, bottom: 0.4 } });
@@ -168,7 +177,6 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
     seriesRefs.current = s;
     chartRef.current = chart;
 
-    // 🎯 범례 실시간 업데이트
     chart.subscribeCrosshairMove((param) => {
       if (!legendRef.current) return;
       const s = seriesRefs.current;
@@ -177,13 +185,12 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
 
       const color = candle.close >= candle.open ? "#2ebd85" : "#f6465d";
 
-      // 🎯 각 지표 및 데이터 가져오기
       const kijunV = param.seriesData.get(s.kijun) as any;
       const rsiV = param.seriesData.get(s.rsi) as any;
       const macdV = param.seriesData.get(s.macd) as any;
       const bbuV = param.seriesData.get(s.bb_upper) as any;
       const bblV = param.seriesData.get(s.bb_lower) as any;
-      const volV = param.seriesData.get(s.volume) as any; // 🎯 Volume 데이터 추출
+      const volV = param.seriesData.get(s.volume) as any;
 
       const numStyle = `font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.5px;`;
       const f = (val: number) =>
@@ -191,81 +198,35 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
           minimumFractionDigits: 1,
           maximumFractionDigits: 1,
         });
-
-      // 🎯 거래량 단위 변환 함수 (예: 1200.5 -> 1.2K)
       const formatVol = (val: number) => {
         if (val >= 1000000) return (val / 1000000).toFixed(2) + "M";
         if (val >= 1000) return (val / 1000).toFixed(2) + "K";
         return val.toFixed(1);
       };
 
+      const formattedSymbol = symbolRef.current.replace("USDT", " / USDT");
+
       legendRef.current.innerHTML = `
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-      <span style="color: #fff; font-size: 14px; font-weight: 800; letter-spacing: -0.02em;">BTC / USDT</span>
-      <span style="font-size: 10px; color: #5d6673; font-weight: 500; ${numStyle}">${new Date((param.time as number) * 1000).toLocaleString()}</span>
-    </div>
-    
-    <div style="display: flex; gap: 16px; margin-bottom: 14px; font-size: 13px;">
-      <div style="display: flex; flex-direction: column;">
-        <span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">OPEN</span>
-        <span style="color: #e6e8ea; ${numStyle}">${f(candle.open)}</span>
-      </div>
-      <div style="display: flex; flex-direction: column;">
-        <span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">HIGH</span>
-        <span style="color: #e6e8ea; ${numStyle}">${f(candle.high)}</span>
-      </div>
-      <div style="display: flex; flex-direction: column;">
-        <span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">LOW</span>
-        <span style="color: #e6e8ea; ${numStyle}">${f(candle.low)}</span>
-      </div>
-      <div style="display: flex; flex-direction: column;">
-        <span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">CLOSE</span>
-        <span style="color: ${color}; font-weight: 700; ${numStyle}">${f(candle.close)}</span>
-      </div>
-      <div style="display: flex; flex-direction: column;">
-        <span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">VOL</span>
-        <span style="color: #e6e8ea; ${numStyle}">${volV ? formatVol(volV.value) : "0.0"}</span>
-      </div>
-    </div>
-
-    <div style="display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
-      ${
-        settingsRef.current.kijun && kijunV
-          ? `<div style="background: rgba(240, 185, 11, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;">
-          <span style="color: #f0b90b; font-size: 9px; font-weight: 900;">KIJUN</span>
-          <span style="color: #f0b90b; font-size: 11px; font-weight: 500; ${numStyle}">${f(kijunV.value)}</span>
-        </div>`
-          : ""
-      }
-      
-      ${
-        settingsRef.current.bollinger && bbuV
-          ? `<div style="background: rgba(33, 150, 243, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;">
-          <span style="color: #2196f3; font-size: 9px; font-weight: 900;">BB</span>
-          <span style="color: #2196f3; font-size: 11px; font-weight: 500; ${numStyle}">${bbuV.value.toFixed(0)} - ${bblV.value.toFixed(0)}</span>
-        </div>`
-          : ""
-      }
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+          <span style="color: #fff; font-size: 14px; font-weight: 800; letter-spacing: -0.02em;">${formattedSymbol}</span>
+          <span style="font-size: 10px; color: #5d6673; font-weight: 500; ${numStyle}">${new Date((param.time as number) * 1000).toLocaleString()}</span>
+        </div>
         
-      ${
-        settingsRef.current.rsi && rsiV
-          ? `<div style="background: rgba(156, 39, 176, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;">
-          <span style="color: #9c27b0; font-size: 9px; font-weight: 900;">RSI</span>
-          <span style="color: #9c27b0; font-size: 11px; font-weight: 500; ${numStyle}">${rsiV.value.toFixed(2)}</span>
-        </div>`
-          : ""
-      }
+        <div style="display: flex; gap: 16px; margin-bottom: 14px; font-size: 13px;">
+          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">OPEN</span><span style="color: #e6e8ea; ${numStyle}">${f(candle.open)}</span></div>
+          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">HIGH</span><span style="color: #e6e8ea; ${numStyle}">${f(candle.high)}</span></div>
+          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">LOW</span><span style="color: #e6e8ea; ${numStyle}">${f(candle.low)}</span></div>
+          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">CLOSE</span><span style="color: ${color}; font-weight: 700; ${numStyle}">${f(candle.close)}</span></div>
+          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">VOL</span><span style="color: #e6e8ea; ${numStyle}">${volV ? formatVol(volV.value) : "0.0"}</span></div>
+        </div>
 
-      ${
-        settingsRef.current.macd && macdV
-          ? `<div style="background: rgba(41, 98, 255, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;">
-          <span style="color: #2962FF; font-size: 9px; font-weight: 900;">MACD</span>
-          <span style="color: #2962FF; font-size: 11px; font-weight: 500; ${numStyle}">${macdV.value.toFixed(2)}</span>
-        </div>`
-          : ""
-      }
-    </div>
-  `;
+        <div style="display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
+          ${settingsRef.current.kijun && kijunV ? `<div style="background: rgba(240, 185, 11, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #f0b90b; font-size: 9px; font-weight: 900;">KIJUN</span><span style="color: #f0b90b; font-size: 11px; font-weight: 500; ${numStyle}">${f(kijunV.value)}</span></div>` : ""}
+          ${settingsRef.current.bollinger && bbuV ? `<div style="background: rgba(33, 150, 243, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #2196f3; font-size: 9px; font-weight: 900;">BB</span><span style="color: #2196f3; font-size: 11px; font-weight: 500; ${numStyle}">${bbuV.value.toFixed(0)} - ${bblV.value.toFixed(0)}</span></div>` : ""}
+          ${settingsRef.current.rsi && rsiV ? `<div style="background: rgba(156, 39, 176, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #9c27b0; font-size: 9px; font-weight: 900;">RSI</span><span style="color: #9c27b0; font-size: 11px; font-weight: 500; ${numStyle}">${rsiV.value.toFixed(2)}</span></div>` : ""}
+          ${settingsRef.current.macd && macdV ? `<div style="background: rgba(41, 98, 255, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #2962FF; font-size: 9px; font-weight: 900;">MACD</span><span style="color: #2962FF; font-size: 11px; font-weight: 500; ${numStyle}">${macdV.value.toFixed(2)}</span></div>` : ""}
+        </div>
+      `;
     });
 
     const handleResize = () =>
@@ -298,27 +259,30 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
       }),
     );
 
-    if (data.indicators.kijun)
+    if (data.indicators?.kijun)
       s.kijun.setData(processData(data.indicators.kijun));
-    if (data.indicators.senkou_a) {
+    if (data.indicators?.senkou_a) {
       const sa = processData(data.indicators.senkou_a);
       s.senkou_a.setData(sa);
       s.cloud.setData(sa);
     }
-    if (data.indicators.senkou_b)
+    if (data.indicators?.senkou_b)
       s.senkou_b.setData(processData(data.indicators.senkou_b));
-    if (data.indicators.bb_upper)
+    if (data.indicators?.bb_upper)
       s.bb_upper.setData(processData(data.indicators.bb_upper));
-    if (data.indicators.bb_middle)
+    if (data.indicators?.bb_middle)
       s.bb_middle.setData(processData(data.indicators.bb_middle));
-    if (data.indicators.bb_lower)
+    if (data.indicators?.bb_lower)
       s.bb_lower.setData(processData(data.indicators.bb_lower));
-    if (data.indicators.rsi) s.rsi.setData(processData(data.indicators.rsi));
-    if (data.indicators.macd_line)
+    if (data.indicators?.rsi) s.rsi.setData(processData(data.indicators.rsi));
+    if (data.indicators?.macd_line)
       s.macd.setData(processData(data.indicators.macd_line));
 
-    if (data.markers)
-      createSeriesMarkers(s.candle, processData(data.markers, true));
+    // 🎯 [V5 핵심] 마커 플러그인을 통한 마커 세팅!
+    if (s.markersPlugin && data.markers) {
+      const markerData = processData(data.markers, true);
+      s.markersPlugin.setMarkers(markerData);
+    }
 
     Object.keys(settings).forEach((key) => {
       if (key === "ichimoku") {
