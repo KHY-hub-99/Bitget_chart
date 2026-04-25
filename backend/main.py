@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import asyncio
+import time
 import uvicorn
 import sqlite3
 import pandas as pd
@@ -16,6 +17,88 @@ base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 db_folder = os.path.join(base_dir, "backend", "market_data")
 db_path = os.path.join(db_folder, "crypto_dashboard.db")
 
+def preload_initial_market_data():
+    symbols = ["BTCUSDT", "ETHUSDT"]
+    timeframes = ["1m", "5m", "15m", "1h"]
+    tf_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
+    
+    print("\n[STARTUP] 스마트 동기화 시작...")
+    for sym in symbols:
+        for tf in timeframes:
+            feed = CryptoDataFeed(symbol=sym, timeframe=tf)
+            feed.load_latest_from_db(limit=100)
+            
+            # [/api/history]와 동일한 시간 기반 체크 로직 적용
+            is_outdated = False
+            if not feed.df.empty:
+                last_time = feed.df.index[-1]
+                now = datetime.now(timezone.utc)
+                if last_time.tzinfo is None:
+                    last_time = last_time.replace(tzinfo=timezone.utc)
+                
+                gap = (now - last_time).total_seconds()
+                if gap > (tf_map.get(tf, 900) + 10):
+                    is_outdated = True
+
+            # 데이터가 아예 없거나, 오래되었으면 동기화 실행
+            if feed.df.empty or is_outdated:
+                print(f"[STARTUP] {sym} ({tf}) 데이터 업데이트 필요 -> API 호출")
+                feed.sync_recent_data(required_limit=5000)
+            else:
+                print(f"[STARTUP] {sym} ({tf}) 최신 상태 유지 중 -> 지표만 갱신")
+                feed.refresh_indicators()
+            
+            time.sleep(0.5) 
+    print("[STARTUP] 모든 데이터가 최신 상태로 준비되었습니다.\n")
+    
+async def continuous_data_sync_worker():
+    """
+    서버 가동 내내 8가지 조합의 최신 데이터를 무한히 수집하여 DB를 최신화하는 백그라운드 엔진
+    (실시간 저장 로그 추가 버전)
+    """
+    symbols = ["BTCUSDT", "ETHUSDT"]
+    timeframes = ["1m", "5m", "15m", "1h"]
+    
+    # 초기 대량 적재(preload)가 끝날 시간을 충분히 벌어줍니다 (로그 겹침 방지)
+    await asyncio.sleep(30) 
+    print("\n" + "="*50)
+    print("[BACKGROUND] 8가지 조합 무한 실시간 수집 엔진 가동!")
+    print("="*50 + "\n")
+
+    while True:
+        start_time = time.time()
+        
+        for sym in symbols:
+            for tf in timeframes:
+                try:
+                    feed = CryptoDataFeed(symbol=sym, timeframe=tf)
+                    
+                    # 1. 바이낸스에서 최신 봉을 가져와 DB에 저장
+                    feed.update_data()
+                    
+                    # 2. [로그 찍기] 저장된 직후 최신 가격과 시간을 확인
+                    if not feed.df.empty:
+                        last_row = feed.df.iloc[-1]
+                        last_price = last_row['close']
+                        now_str = datetime.now().strftime("%H:%M:%S")
+                        
+                        # 터미널에 실시간 저장 상황 출력
+                        print(f"[{now_str}] [백그라운드 저장 완료] {sym:8} | {tf:3} | 현재가: {last_price:,.2f}")
+                    
+                    # API 호출 사이 간격 (바이낸스 보호)
+                    await asyncio.sleep(1) 
+                    
+                except Exception as e:
+                    print(f"[BACKGROUND 🔴] {sym} ({tf}) 수집 중 오류: {e}")
+
+        # 한 사이클 종료 로그
+        elapsed = time.time() - start_time
+        print(f"\n[INFO] 전체 8종 데이터 한 사이클 업데이트 완료 ({elapsed:.2f}초 소요). 15초 대기...")
+        print("-" * 50 + "\n")
+
+        # 15초 대기 후 다시 처음부터 수집 시작
+        await asyncio.sleep(15)
+
 # [1] Lifespan: 서버 가동 시 상태 메시지 출력
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -23,8 +106,16 @@ async def lifespan(app: FastAPI):
     print("Crypto Trading Dashboard API 서버 가동")
     print("데이터베이스: market_data/crypto_dashboard.db")
     print("="*60 + "\n")
+    
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, preload_initial_market_data)
+    
+    # 추가: 무한 실시간 수집 워커 등록 (프론트엔드 연결과 무관하게 백그라운드에서 계속 돎)
+    sync_task = asyncio.create_task(continuous_data_sync_worker())
+    
     yield
     print("\n서버를 안전하게 종료합니다.")
+    sync_task.cancel() # 서버 종료 시 워커도 깔끔하게 종료
 
 app = FastAPI(title="Crypto Trading Dashboard API", lifespan=lifespan)
 
@@ -112,18 +203,35 @@ async def websocket_endpoint(
     await websocket.accept()
     # 새로운 심볼로 피드 생성
     feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
+    print(f"\n[WS 🟢] {symbol} ({timeframe}) 실시간 데이터 수집 및 DB 저장 스트림 시작\n")
     
     try:
+        # 터미널 도배 방지를 위해 이전 가격을 기억할 변수
+        prev_price = 0
+        
         while True:
+            # 1. 바이낸스 최신 데이터 가져와서 DB에 저장 및 지표 갱신
             feed.update_data()
+            
+            # 2. 프론트엔드로 보낼 차트 데이터 변환
             latest_chart_df = feed.get_chart_df(limit=2)
             
             if not latest_chart_df.empty:
                 latest_data = convert_df_to_chart_data(latest_chart_df)
-                # 🎯 데이터에 현재 심볼 이름을 명시적으로 추가
                 latest_data['symbol'] = symbol 
                 await websocket.send_json(latest_data)
+                
+                # 🎯 [로그 출력 로직]
+                last_candle = latest_chart_df.iloc[-1]
+                current_price = last_candle['close']
+                now_str = datetime.now().strftime("%H:%M:%S")
+
+                # 가격이 변동되었거나 1분봉처럼 빠르게 갱신되는 걸 보고 싶을 때
+                if current_price != prev_price:
+                    print(f"[{now_str}] [DB 실시간 저장] {symbol} ({timeframe}) | 현재가: {current_price:,.2f} USDT")
+                    prev_price = current_price
             
+            # 5초 대기 후 반복
             await asyncio.sleep(5)
             
     except WebSocketDisconnect:
