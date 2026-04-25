@@ -32,8 +32,10 @@ function App() {
 
   useEffect(() => {
     let ws: WebSocket | null = null;
+    // 🎯 [해결 핵심] 현재 effect의 유효성을 체크하는 플래그
+    let isActive = true;
 
-    // 1️⃣ 새로운 심볼 로딩 시작 시 기존 상태 초기화 (BTC 잔상 제거)
+    // 1️⃣ 새로운 심볼 로딩 시작 시 기존 상태 초기화
     setIsLoading(true);
     setChartData(null);
     setError(null);
@@ -42,36 +44,34 @@ function App() {
     // 2️⃣ 과거 데이터 로드
     fetchChartData(symbol, timeframe, days)
       .then((initialData) => {
-        // 초기 데이터에는 심볼 정보를 포함해서 저장하는 것이 좋습니다.
+        if (!isActive) return; // 🎯 이전 요청이 언마운트되었다면 무시
         setChartData({ ...initialData, symbol });
         setIsLoading(false);
 
-        // 3️⃣ 실시간 데이터 구독 (중첩 호출 제거)
+        // 3️⃣ 실시간 데이터 구독
         ws = subscribeChartData(symbol, timeframe, (newData) => {
+          if (!isActive) return; // 🎯 [해결 핵심] 컴포넌트가 변경/언마운트된 경우 이전 웹소켓 데이터 완벽 차단
+
           setIsLive(true);
 
           setChartData((prev: any) => {
-            // 🎯 [핵심 1] 들어온 데이터 자체가 없거나 심볼 정보가 없으면 무시
             if (!newData || !newData.candles || newData.candles.length === 0)
               return prev;
 
-            // 🎯 [핵심 2] 현재 보고 있는 심볼과 데이터의 심볼이 다르면 "병합"하지 않고 "교체"
-            // 백엔드에서 newData.symbol을 보내준다는 가정하에 작동합니다.
             if (!prev || prev.symbol !== symbol || newData.symbol !== symbol) {
               console.log(
                 `[System] Symbol Changed or Mismatch: ${symbol}. Resetting state.`,
               );
-              return { ...newData, symbol }; // 기존 BTC 데이터(prev)를 버리고 ETH(newData)로 완전히 갈아치움
+              return { ...newData, symbol };
             }
 
-            // 🎯 [핵심 3] 가격 범위 안전장치 (ETH인데 비정상적으로 높은 가격 차단)
             const lastPrice = newData.candles[newData.candles.length - 1].close;
             if (symbol === "ETHUSDT" && lastPrice > 10000) {
               console.warn("BTC data detected in ETH channel. Blocked.");
-              return prev; // 병합하지 않고 기존 상태 유지
+              return prev;
             }
 
-            // 이후 데이터 병합 로직 수행 (심볼이 확실히 일치할 때만 실행됨) [cite: 508]
+            // ... (이하 기존 병합 로직 동일)
             const candleMap = new Map();
             prev.candles.forEach((c: any) => candleMap.set(c.time, c));
             newData.candles.forEach((c: any) => candleMap.set(c.time, c));
@@ -79,7 +79,7 @@ function App() {
               (a, b) => a.time - b.time,
             );
 
-            // 지표 병합 (kijun, rsi, macd_line 등) [cite: 706, 828]
+            // 지표 병합
             const mergeIndicator = (prevIdx: any[], newIdx: any[]) => {
               const iMap = new Map();
               if (prevIdx) prevIdx.forEach((i) => iMap.set(i.time, i));
@@ -95,7 +95,7 @@ function App() {
               );
             });
 
-            // 마커 병합 (master_long, master_short 등) [cite: 559, 618]
+            // 마커 병합
             const markerMap = new Map();
             prev.markers?.forEach((m: any) =>
               markerMap.set(`${m.time}-${m.text}`, m),
@@ -117,13 +117,15 @@ function App() {
         });
       })
       .catch((err) => {
+        if (!isActive) return;
         console.error(err);
         setError("데이터 로드 실패. 서버 상태를 확인하세요.");
         setIsLoading(false);
       });
 
-    // 4️⃣ 클린업: 심볼 변경 시 이전 웹소켓 연결 종료
+    // 4️⃣ 클린업: 심볼 변경 시 이전 웹소켓 연결 종료 및 플래그 비활성화
     return () => {
+      isActive = false; // 🎯 플래그를 false로 전환하여 좀비 콜백 차단
       if (ws) {
         console.log(`Closing connection for ${symbol}`);
         ws.close();
