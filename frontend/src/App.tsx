@@ -1,39 +1,107 @@
 import { useEffect, useState } from "react";
-import { fetchChartData } from "./api";
+import { fetchChartData, subscribeChartData } from "./api";
 import TradingChart from "./TradingChart";
 
 function App() {
   const [chartData, setChartData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(true); // 로딩 상태 명시적 관리
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // 🎯 사용자가 선택할 상태 변수들
+  // 1️⃣ 마켓 설정 상태
   const [symbol, setSymbol] = useState<string>("BTC/USDT:USDT");
   const [timeframe, setTimeframe] = useState<string>("5m");
   const [days, setDays] = useState<number>(90);
 
-  // 파라미터가 변경될 때마다 데이터를 새로 불러옵니다.
-  useEffect(() => {
-    setIsLoading(true);
-    setChartData(null); // 기존 차트 지우기
-    setError(null);
+  // 2️⃣ 🎯 지표 가시성(On/Off) 상태 추가
+  const [visibleLayers, setVisibleLayers] = useState({
+    kijun: true,
+    ichimoku: true,
+    bollinger: true,
+    rsi: true,
+    macd: true,
+  });
 
+  const toggleLayer = (layer: keyof typeof visibleLayers) => {
+    setVisibleLayers((prev) => ({ ...prev, [layer]: !prev[layer] }));
+  };
+
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+
+    setIsLoading(true);
+    setChartData(null);
+    setError(null);
+    setIsLive(false);
+
+    // 초기 데이터 로드
     fetchChartData(symbol, timeframe, days)
-      .then((data) => {
-        setChartData(data);
-        setIsLive(true);
+      .then((initialData) => {
+        setChartData(initialData);
         setIsLoading(false);
+
+        // 실시간 웹소켓 구독 시작
+        ws = subscribeChartData(symbol, timeframe, (newData) => {
+          setIsLive(true);
+          setChartData((prev: any) => {
+            if (!prev) return newData;
+
+            // [데이터 병합] 중복 제거 및 시간순 정렬
+            const candleMap = new Map();
+            prev.candles.forEach((c: any) => candleMap.set(c.time, c));
+            newData.candles.forEach((c: any) => candleMap.set(c.time, c));
+            const mergedCandles = Array.from(candleMap.values()).sort(
+              (a, b) => a.time - b.time,
+            );
+
+            // [지표 병합]
+            const mergeIndicator = (prevIdx: any[], newIdx: any[]) => {
+              const iMap = new Map();
+              if (prevIdx) prevIdx.forEach((i) => iMap.set(i.time, i));
+              if (newIdx) newIdx.forEach((i) => iMap.set(i.time, i));
+              return Array.from(iMap.values()).sort((a, b) => a.time - b.time);
+            };
+
+            const mergedIndicators = { ...prev.indicators };
+            Object.keys(newData.indicators).forEach((key) => {
+              mergedIndicators[key] = mergeIndicator(
+                prev.indicators[key],
+                newData.indicators[key],
+              );
+            });
+
+            // [마커 병합]
+            const markerMap = new Map();
+            prev.markers.forEach((m: any) =>
+              markerMap.set(`${m.time}-${m.text}`, m),
+            );
+            newData.markers.forEach((m: any) =>
+              markerMap.set(`${m.time}-${m.text}`, m),
+            );
+            const mergedMarkers = Array.from(markerMap.values()).sort(
+              (a, b) => a.time - b.time,
+            );
+
+            return {
+              ...prev,
+              candles: mergedCandles,
+              indicators: mergedIndicators,
+              markers: mergedMarkers,
+            };
+          });
+        });
       })
       .catch((err) => {
         console.error(err);
-        setError("데이터를 불러오지 못했습니다. 백엔드 서버를 확인해 주세요.");
-        setIsLive(false);
+        setError("데이터 로드 실패. 서버 상태를 확인하세요.");
         setIsLoading(false);
       });
-  }, [symbol, timeframe, days]); // 이 3개 중 하나라도 바뀌면 useEffect 재실행
 
-  // 공통 셀렉트 박스 스타일
+    return () => {
+      if (ws) ws.close();
+    };
+  }, [symbol, timeframe, days]);
+
   const selectStyle = {
     backgroundColor: "#1e222d",
     color: "#d1d4dc",
@@ -42,7 +110,19 @@ function App() {
     borderRadius: "6px",
     outline: "none",
     cursor: "pointer",
-    fontSize: "0.9rem",
+    fontSize: "0.85rem",
+  };
+
+  const checkboxLabelStyle = {
+    color: "#848e9c",
+    fontSize: "0.8rem",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "4px 8px",
+    borderRadius: "4px",
+    backgroundColor: "#1e222d",
   };
 
   return (
@@ -53,10 +133,10 @@ function App() {
         backgroundColor: "#0b0e14",
         display: "flex",
         flexDirection: "column",
-        fontFamily: "'Inter', sans-serif",
+        fontFamily: "Inter, sans-serif",
       }}
     >
-      {/* 헤더 영역 (기존과 동일) */}
+      {/* 🚀 상단 헤더 */}
       <header
         style={{
           height: "60px",
@@ -116,7 +196,7 @@ function App() {
           <span
             style={{
               color: isLive ? "#26a69a" : "#ef5350",
-              fontSize: "0.85rem",
+              fontSize: "0.8rem",
               fontWeight: 600,
             }}
           >
@@ -125,14 +205,14 @@ function App() {
         </div>
       </header>
 
-      {/* 🎯 컨트롤 툴바 영역 (신규 추가) */}
+      {/* 🛠️ 컨트롤 툴바 (마켓/분봉/기간) */}
       <div
         style={{
-          padding: "10px 24px",
+          padding: "12px 24px",
           backgroundColor: "#131722",
           borderBottom: "1px solid #2a2e39",
           display: "flex",
-          gap: "16px",
+          gap: "20px",
           alignItems: "center",
         }}
       >
@@ -143,11 +223,10 @@ function App() {
             value={symbol}
             onChange={(e) => setSymbol(e.target.value)}
           >
-            <option value="BTC/USDT:USDT">BTC/USDT (Bitcoin)</option>
-            <option value="ETH/USDT:USDT">ETH/USDT (Ethereum)</option>
+            <option value="BTC/USDT:USDT">BTC/USDT</option>
+            <option value="ETH/USDT:USDT">ETH/USDT</option>
           </select>
         </div>
-
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>
             Timeframe:
@@ -165,7 +244,6 @@ function App() {
             <option value="1d">1d</option>
           </select>
         </div>
-
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>
             History:
@@ -182,12 +260,35 @@ function App() {
         </div>
       </div>
 
+      {/* 🎯 지표 가시성 토글 바 (신규 추가) */}
+      <div
+        style={{
+          padding: "8px 24px",
+          backgroundColor: "#131722",
+          borderBottom: "1px solid #2a2e39",
+          display: "flex",
+          gap: "10px",
+          flexWrap: "wrap",
+        }}
+      >
+        {Object.entries(visibleLayers).map(([key, isVisible]) => (
+          <label key={key} style={checkboxLabelStyle}>
+            <input
+              type="checkbox"
+              checked={isVisible}
+              onChange={() => toggleLayer(key as any)}
+              style={{ accentColor: "#2962FF" }}
+            />
+            {key.toUpperCase()}
+          </label>
+        ))}
+      </div>
+
       {/* 메인 차트 영역 */}
       <main
         style={{
           flex: 1,
           padding: "20px",
-          position: "relative",
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
@@ -197,27 +298,18 @@ function App() {
           <div
             style={{
               backgroundColor: "#1e222d",
-              padding: "30px 40px",
+              padding: "30px",
               borderRadius: "12px",
               border: "1px solid #ef5350",
               textAlign: "center",
             }}
           >
-            <div style={{ fontSize: "40px", marginBottom: "10px" }}>🔌</div>
-            <h3 style={{ color: "#ef5350", margin: "0 0 10px 0" }}>
-              Connection Failed
-            </h3>
-            <p style={{ color: "#a3a6af", margin: 0 }}>{error}</p>
+            <div style={{ fontSize: "32px" }}>🔌</div>
+            <h3 style={{ color: "#ef5350" }}>Connection Failed</h3>
+            <p style={{ color: "#a3a6af" }}>{error}</p>
           </div>
         ) : isLoading || !chartData ? (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "16px",
-            }}
-          >
+          <div style={{ textAlign: "center" }}>
             <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
             <div
               style={{
@@ -227,17 +319,11 @@ function App() {
                 borderTop: "3px solid #2962FF",
                 borderRadius: "50%",
                 animation: "spin 1s linear infinite",
+                margin: "0 auto 16px",
               }}
             />
-            <div
-              style={{
-                color: "#848e9c",
-                fontSize: "0.9rem",
-                fontWeight: 500,
-                letterSpacing: "1px",
-              }}
-            >
-              LOADING MARKET DATA...
+            <div style={{ color: "#848e9c", letterSpacing: "1px" }}>
+              LOADING...
             </div>
           </div>
         ) : (
@@ -251,7 +337,8 @@ function App() {
               overflow: "hidden",
             }}
           >
-            <TradingChart data={chartData} />
+            {/* 🎯 settings 프롭으로 가시성 상태 전달 */}
+            <TradingChart data={chartData} settings={visibleLayers} />
           </div>
         )}
       </main>

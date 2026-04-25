@@ -6,237 +6,363 @@ import {
   CandlestickSeries,
   HistogramSeries,
   LineSeries,
+  AreaSeries,
   createSeriesMarkers,
-  LineStyle, // 라이브러리 기능: 선 스타일 (점선, 대시 등)
+  LineStyle,
+  IChartApi,
+  ISeriesApi,
 } from "lightweight-charts";
 
 interface ChartDataProps {
   data: {
     candles: any[];
     volumes: any[];
-    indicators: {
-      kijun?: any[];
-      bb_upper?: any[];
-      bb_middle?: any[]; // 백엔드에서 추가된 중심선
-      bb_lower?: any[];
-      rsi?: any[];
-      macd_line?: any[];
-      macd_sig?: any[];
-      senkou_a?: any[];
-      senkou_b?: any[];
-    };
+    indicators: { [key: string]: any[] };
     markers: any[];
+  };
+  settings: {
+    kijun: boolean;
+    ichimoku: boolean;
+    bollinger: boolean;
+    rsi: boolean;
+    macd: boolean;
   };
 }
 
-const TradingChart: React.FC<ChartDataProps> = ({ data }) => {
+const TradingChart: React.FC<ChartDataProps> = ({ data, settings }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRefs = useRef<{ [key: string]: ISeriesApi<any> }>({});
+
+  const settingsRef = useRef(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  const processData = (items: any[], isCandle = false) => {
+    if (!items || !Array.isArray(items)) return [];
+    const uniqueMap = new Map();
+    items.forEach((item) => {
+      if (!item || !item.time) return;
+      if (!isCandle && (item.value === null || item.value === undefined))
+        return;
+      uniqueMap.set(item.time, item);
+    });
+    return Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+  };
 
   useEffect(() => {
-    if (!chartContainerRef.current || !legendRef.current || !data) return;
-
-    chartContainerRef.current.innerHTML = "";
+    if (!chartContainerRef.current) return;
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: "#131722" },
-        textColor: "#d1d4dc",
+        background: { type: ColorType.Solid, color: "#0b0e11" },
+        textColor: "#929aa5",
         fontSize: 12,
+        // 🎯 차트 내부 폰트도 깔끔한 Sans-serif로 고정
+        fontFamily: "'Inter', sans-serif",
       },
       localization: {
         locale: "ko-KR",
-        timeFormatter: (time: number) => {
-          const date = new Date(time * 1000);
-          return `${date.getFullYear()}년 ${date.getMonth() + 1}월 ${date.getDate()}일 ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+        // 🎯 하단 시간 박스 포맷 (2026-04-25 06:15)
+        timeFormatter: (timestamp: number) => {
+          const d = new Date(timestamp * 1000);
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
         },
       },
       grid: {
-        vertLines: { color: "rgba(42, 46, 57, 0.2)" },
-        horzLines: { color: "rgba(42, 46, 57, 0.2)" },
+        vertLines: { color: "rgba(42, 46, 57, 0.03)" },
+        horzLines: { color: "rgba(42, 46, 57, 0.03)" },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { labelBackgroundColor: "#2962FF" },
+        horzLine: { labelBackgroundColor: "#2962FF" },
+      },
+      timeScale: {
+        borderColor: "rgba(197, 203, 206, 0.2)",
+        timeVisible: true,
+        secondsVisible: false,
+        barSpacing: 12,
+        // 🎯 [수정] 우측에 30개 캔들 정도의 빈 공간을 강제로 만듭니다.
+        rightOffset: 30,
+        shiftVisibleRangeOnNewBar: true,
       },
       width: chartContainerRef.current.clientWidth,
-      height: 600,
-      crosshair: { mode: CrosshairMode.Normal },
+      height: 650,
     });
 
-    // 1. 캔들 및 거래량 차트 세팅
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#26a69a",
-      downColor: "#ef5350",
+    const s: any = {};
+    s.candle = chart.addSeries(CandlestickSeries, {
+      upColor: "#2ebd85",
+      downColor: "#f6465d",
       borderVisible: false,
-      wickUpColor: "#26a69a",
-      wickDownColor: "#ef5350",
+      wickUpColor: "#2ebd85",
+      wickDownColor: "#f6465d",
     });
-    candleSeries.setData(data.candles);
-
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: "#26a69a",
+    s.kijun = chart.addSeries(LineSeries, { color: "#f0b90b", lineWidth: 2 });
+    s.senkou_a = chart.addSeries(LineSeries, {
+      color: "rgba(46, 189, 133, 0.4)",
+      lineWidth: 1,
+    });
+    s.senkou_b = chart.addSeries(LineSeries, {
+      color: "rgba(246, 70, 93, 0.4)",
+      lineWidth: 1,
+    });
+    s.cloud = chart.addSeries(AreaSeries, {
+      lineColor: "transparent",
+      // 위쪽 선(Senkou A)의 색상
+      topColor: "rgba(46, 189, 133, 0.25)",
+      // 아래쪽 색상을 '투명'하게 처리하여 바닥까지 꽉 차는 현상을 막습니다.
+      bottomColor: "rgba(11, 14, 17, 0)",
+      lineWidth: 0,
+      priceLineVisible: false, // 우측 가격축에 현재가 선 표시 안함
+      baseValue: { type: "price", price: 0 }, // 기준선을 0으로 설정
+    });
+    s.bb_upper = chart.addSeries(LineSeries, {
+      color: "rgba(33, 150, 243, 0.4)",
+      lineStyle: LineStyle.Dashed,
+      lineWidth: 1,
+    });
+    s.bb_middle = chart.addSeries(LineSeries, {
+      color: "rgba(158, 158, 158, 0.2)",
+      lineStyle: LineStyle.Dotted,
+      lineWidth: 1,
+    });
+    s.bb_lower = chart.addSeries(LineSeries, {
+      color: "rgba(33, 150, 243, 0.4)",
+      lineStyle: LineStyle.Dashed,
+      lineWidth: 1,
+    });
+    s.rsi = chart.addSeries(LineSeries, {
+      color: "#9c27b0",
+      lineWidth: 2,
+      priceScaleId: "rsi_p",
+    });
+    s.macd = chart.addSeries(LineSeries, {
+      color: "#2962FF",
+      lineWidth: 1.5,
+      priceScaleId: "macd_p",
+    });
+    s.volume = chart.addSeries(HistogramSeries, {
+      color: "rgba(146, 154, 165, 0.2)",
       priceFormat: { type: "volume" },
-      priceScaleId: "",
+      priceScaleId: "vol_p",
     });
-    volumeSeries
-      .priceScale()
-      .applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    volumeSeries.setData(
-      data.volumes.map((vol, index) => ({
-        ...vol,
-        color:
-          data.candles[index].close >= data.candles[index].open
-            ? "rgba(38, 166, 154, 0.2)"
-            : "rgba(239, 83, 80, 0.2)",
-      })),
-    );
 
-    // 지표 렌더링 함수 (LineStyle 파라미터 추가)
-    const addLine = (
-      name: string,
-      indicatorData: any,
-      color: string,
-      pane?: string,
-      lineStyle: LineStyle = LineStyle.Solid,
-    ) => {
-      if (indicatorData && indicatorData.length > 0) {
-        const series = chart.addSeries(LineSeries, {
-          color,
-          lineWidth: name === "Kijun" ? 2 : 1,
-          lineStyle: lineStyle, // 점선, 파선 적용
-          priceScaleId: pane || "right", // 기본 캔들 패널(right) 또는 독립 패널
-        });
-        series.setData(indicatorData.filter((i: any) => i.value !== null));
-        return series;
-      }
-      return null;
-    };
+    // 레이아웃 배분
+    chart
+      .priceScale("right")
+      .applyOptions({ scaleMargins: { top: 0.05, bottom: 0.4 } });
+    chart
+      .priceScale("rsi_p")
+      .applyOptions({ scaleMargins: { top: 0.65, bottom: 0.2 } });
+    chart
+      .priceScale("macd_p")
+      .applyOptions({ scaleMargins: { top: 0.82, bottom: 0.08 } });
+    chart
+      .priceScale("vol_p")
+      .applyOptions({ scaleMargins: { top: 0.93, bottom: 0 } });
 
-    // 2. 메인 차트 지표 (Kijun, 일목, 볼린저 밴드)
-    const kijunSeries = addLine(
-      "Kijun",
-      data.indicators?.kijun,
-      "rgba(255, 152, 0, 0.9)",
-    );
-    addLine("SenkouA", data.indicators?.senkou_a, "rgba(0, 150, 136, 0.3)");
-    addLine("SenkouB", data.indicators?.senkou_b, "rgba(255, 82, 82, 0.3)");
+    seriesRefs.current = s;
+    chartRef.current = chart;
 
-    // 🎯 [신규] 볼린저 밴드 라인 추가 (LineStyle 활용)
-    const bbUpperSeries = addLine(
-      "BBU",
-      data.indicators?.bb_upper,
-      "rgba(33, 150, 243, 0.5)",
-      undefined,
-      LineStyle.Dashed,
-    );
-    const bbMiddleSeries = addLine(
-      "BBM",
-      data.indicators?.bb_middle,
-      "rgba(158, 158, 158, 0.5)",
-      undefined,
-      LineStyle.Dotted,
-    );
-    const bbLowerSeries = addLine(
-      "BBL",
-      data.indicators?.bb_lower,
-      "rgba(33, 150, 243, 0.5)",
-      undefined,
-      LineStyle.Dashed,
-    );
-
-    // 3. 서브 차트 지표 (RSI, MACD)
-    const rsiSeries = addLine("RSI", data.indicators?.rsi, "#9c27b0", "rsi");
-    const macdSeries = addLine(
-      "MACD",
-      data.indicators?.macd_line,
-      "#2962FF",
-      "macd",
-    );
-
-    if (data.indicators?.rsi)
-      chart
-        .priceScale("rsi")
-        .applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    if (data.indicators?.macd_line)
-      chart
-        .priceScale("macd")
-        .applyOptions({ scaleMargins: { top: 0.7, bottom: 0.1 } });
-
-    // 4. 마커 로직 최적화 (백엔드 데이터 100% 신뢰)
-    // chat_services.py 에서 shape, color, position을 이미 포맷팅해서 주므로, 그대로 반영합니다.
-    if (data.markers && data.markers.length > 0) {
-      createSeriesMarkers(candleSeries, data.markers as any);
-    }
-
-    // 5. Legend (범례) 업데이트 로직 확장
-    const updateLegend = (param: any) => {
+    // 🎯 범례 실시간 업데이트
+    chart.subscribeCrosshairMove((param) => {
       if (!legendRef.current) return;
-      const candle =
-        param.seriesData.get(candleSeries) ||
-        data.candles[data.candles.length - 1];
+      const s = seriesRefs.current;
+      const candle = param.seriesData.get(s.candle) as any;
+      if (!candle || !param.time) return;
 
-      // 각 지표의 현재 마우스 위치 값 가져오기
-      const rsiVal = rsiSeries ? param.seriesData.get(rsiSeries) : null;
-      const kijunVal = kijunSeries ? param.seriesData.get(kijunSeries) : null;
-      const macdVal = macdSeries ? param.seriesData.get(macdSeries) : null;
+      const color = candle.close >= candle.open ? "#2ebd85" : "#f6465d";
 
-      // 볼린저 밴드 값
-      const bbuVal = bbUpperSeries ? param.seriesData.get(bbUpperSeries) : null;
-      const bblVal = bbLowerSeries ? param.seriesData.get(bbLowerSeries) : null;
+      // 🎯 각 지표 및 데이터 가져오기
+      const kijunV = param.seriesData.get(s.kijun) as any;
+      const rsiV = param.seriesData.get(s.rsi) as any;
+      const macdV = param.seriesData.get(s.macd) as any;
+      const bbuV = param.seriesData.get(s.bb_upper) as any;
+      const bblV = param.seriesData.get(s.bb_lower) as any;
+      const volV = param.seriesData.get(s.volume) as any; // 🎯 Volume 데이터 추출
 
-      const d = new Date(candle.time * 1000);
-      const dateStr = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-      const color = candle.close >= candle.open ? "#26a69a" : "#ef5350";
+      const numStyle = `font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.5px;`;
+      const f = (val: number) =>
+        val.toLocaleString(undefined, {
+          minimumFractionDigits: 1,
+          maximumFractionDigits: 1,
+        });
 
-      // HTML 렌더링
+      // 🎯 거래량 단위 변환 함수 (예: 1200.5 -> 1.2K)
+      const formatVol = (val: number) => {
+        if (val >= 1000000) return (val / 1000000).toFixed(2) + "M";
+        if (val >= 1000) return (val / 1000).toFixed(2) + "K";
+        return val.toFixed(1);
+      };
+
       legendRef.current.innerHTML = `
-        <div style="color: #eceff1; font-weight: bold; margin-bottom: 4px;">
-            BTC/USDT <span style="font-size: 11px; font-weight: normal; color: #848e9c; margin-left: 8px;">${dateStr}</span>
-        </div>
-        <div style="font-size: 12px; margin-bottom: 4px;">
-            <span style="color: #848e9c">O:</span> <span style="color: ${color}">${candle.open}</span>
-            <span style="color: #848e9c; margin-left: 8px;">H:</span> <span style="color: ${color}">${candle.high}</span>
-            <span style="color: #848e9c; margin-left: 8px;">L:</span> <span style="color: ${color}">${candle.low}</span>
-            <span style="color: #848e9c; margin-left: 8px;">C:</span> <span style="color: ${color}">${candle.close}</span>
-        </div>
-        <div style="font-size: 11px; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 2px;">
-            ${kijunVal ? `<span style="color: rgba(255, 152, 0, 1)">Kijun: ${kijunVal.value.toFixed(2)}</span>` : ""}
-            ${bbuVal && bblVal ? `<span style="color: rgba(33, 150, 243, 0.9)">BB(${bbuVal.value.toFixed(2)} - ${bblVal.value.toFixed(2)})</span>` : ""}
-            ${rsiVal ? `<span style="color: #9c27b0">RSI: ${rsiVal.value.toFixed(2)}</span>` : ""}
-            ${macdVal ? `<span style="color: #2962FF">MACD: ${macdVal.value.toFixed(2)}</span>` : ""}
-        </div>`;
-    };
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+      <span style="color: #fff; font-size: 14px; font-weight: 800; letter-spacing: -0.02em;">BTC / USDT</span>
+      <span style="font-size: 10px; color: #5d6673; font-weight: 500; ${numStyle}">${new Date((param.time as number) * 1000).toLocaleString()}</span>
+    </div>
+    
+    <div style="display: flex; gap: 16px; margin-bottom: 14px; font-size: 13px;">
+      <div style="display: flex; flex-direction: column;">
+        <span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">OPEN</span>
+        <span style="color: #e6e8ea; ${numStyle}">${f(candle.open)}</span>
+      </div>
+      <div style="display: flex; flex-direction: column;">
+        <span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">HIGH</span>
+        <span style="color: #e6e8ea; ${numStyle}">${f(candle.high)}</span>
+      </div>
+      <div style="display: flex; flex-direction: column;">
+        <span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">LOW</span>
+        <span style="color: #e6e8ea; ${numStyle}">${f(candle.low)}</span>
+      </div>
+      <div style="display: flex; flex-direction: column;">
+        <span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">CLOSE</span>
+        <span style="color: ${color}; font-weight: 700; ${numStyle}">${f(candle.close)}</span>
+      </div>
+      <div style="display: flex; flex-direction: column;">
+        <span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">VOL</span>
+        <span style="color: #e6e8ea; ${numStyle}">${volV ? formatVol(volV.value) : "0.0"}</span>
+      </div>
+    </div>
 
-    chart.subscribeCrosshairMove(updateLegend);
-    updateLegend({ seriesData: new Map() });
+    <div style="display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
+      ${
+        settingsRef.current.kijun && kijunV
+          ? `<div style="background: rgba(240, 185, 11, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;">
+          <span style="color: #f0b90b; font-size: 9px; font-weight: 900;">KIJUN</span>
+          <span style="color: #f0b90b; font-size: 11px; font-weight: 500; ${numStyle}">${f(kijunV.value)}</span>
+        </div>`
+          : ""
+      }
+      
+      ${
+        settingsRef.current.bollinger && bbuV
+          ? `<div style="background: rgba(33, 150, 243, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;">
+          <span style="color: #2196f3; font-size: 9px; font-weight: 900;">BB</span>
+          <span style="color: #2196f3; font-size: 11px; font-weight: 500; ${numStyle}">${bbuV.value.toFixed(0)} - ${bblV.value.toFixed(0)}</span>
+        </div>`
+          : ""
+      }
+        
+      ${
+        settingsRef.current.rsi && rsiV
+          ? `<div style="background: rgba(156, 39, 176, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;">
+          <span style="color: #9c27b0; font-size: 9px; font-weight: 900;">RSI</span>
+          <span style="color: #9c27b0; font-size: 11px; font-weight: 500; ${numStyle}">${rsiV.value.toFixed(2)}</span>
+        </div>`
+          : ""
+      }
+
+      ${
+        settingsRef.current.macd && macdV
+          ? `<div style="background: rgba(41, 98, 255, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;">
+          <span style="color: #2962FF; font-size: 9px; font-weight: 900;">MACD</span>
+          <span style="color: #2962FF; font-size: 11px; font-weight: 500; ${numStyle}">${macdV.value.toFixed(2)}</span>
+        </div>`
+          : ""
+      }
+    </div>
+  `;
+    });
 
     const handleResize = () =>
-      chartContainerRef.current &&
-      chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      chart.applyOptions({ width: chartContainerRef.current!.clientWidth });
     window.addEventListener("resize", handleResize);
     return () => {
       window.removeEventListener("resize", handleResize);
       chart.remove();
     };
-  }, [data]);
+  }, []);
+
+  useEffect(() => {
+    if (!chartRef.current || !data) return;
+    const s = seriesRefs.current;
+
+    const finalCandles = processData(data.candles, true);
+    s.candle.setData(finalCandles);
+
+    const finalVols = processData(data.volumes);
+    s.volume.setData(
+      finalVols.map((v) => {
+        const c = finalCandles.find((cand) => cand.time === v.time);
+        return {
+          ...v,
+          color:
+            c && c.close >= c.open
+              ? "rgba(46, 189, 133, 0.25)"
+              : "rgba(246, 70, 93, 0.25)",
+        };
+      }),
+    );
+
+    if (data.indicators.kijun)
+      s.kijun.setData(processData(data.indicators.kijun));
+    if (data.indicators.senkou_a) {
+      const sa = processData(data.indicators.senkou_a);
+      s.senkou_a.setData(sa);
+      s.cloud.setData(sa);
+    }
+    if (data.indicators.senkou_b)
+      s.senkou_b.setData(processData(data.indicators.senkou_b));
+    if (data.indicators.bb_upper)
+      s.bb_upper.setData(processData(data.indicators.bb_upper));
+    if (data.indicators.bb_middle)
+      s.bb_middle.setData(processData(data.indicators.bb_middle));
+    if (data.indicators.bb_lower)
+      s.bb_lower.setData(processData(data.indicators.bb_lower));
+    if (data.indicators.rsi) s.rsi.setData(processData(data.indicators.rsi));
+    if (data.indicators.macd_line)
+      s.macd.setData(processData(data.indicators.macd_line));
+
+    if (data.markers)
+      createSeriesMarkers(s.candle, processData(data.markers, true));
+
+    Object.keys(settings).forEach((key) => {
+      if (key === "ichimoku") {
+        ["senkou_a", "senkou_b", "cloud"].forEach((k) =>
+          s[k]?.applyOptions({ visible: settings.ichimoku }),
+        );
+      } else if (key === "bollinger") {
+        ["bb_upper", "bb_middle", "bb_lower"].forEach((k) =>
+          s[k]?.applyOptions({ visible: settings.bollinger }),
+        );
+      } else if (s[key]) {
+        s[key].applyOptions({ visible: (settings as any)[key] });
+      }
+    });
+  }, [data, settings]);
 
   return (
     <div
       style={{
         position: "relative",
         width: "100%",
-        height: "600px",
-        background: "#131722",
-        borderRadius: "8px",
+        height: "650px",
+        background: "#0b0e11",
+        borderRadius: "16px",
         overflow: "hidden",
+        border: "1px solid #1e222d",
       }}
     >
       <div
         ref={legendRef}
         style={{
           position: "absolute",
-          top: 16,
-          left: 16,
+          top: 20,
+          left: 20,
           zIndex: 10,
           pointerEvents: "none",
-          fontFamily: "sans-serif",
+          fontFamily: "'Inter', sans-serif",
+          background: "rgba(11, 14, 17, 0.85)",
+          backdropFilter: "blur(12px)",
+          padding: "18px",
+          borderRadius: "14px",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          boxShadow: "0 12px 48px rgba(0, 0, 0, 0.5)",
+          minWidth: "320px",
         }}
       />
       <div ref={chartContainerRef} style={{ width: "100%", height: "100%" }} />
