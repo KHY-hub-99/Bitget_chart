@@ -87,5 +87,5 @@ def apply_master_strategy(
     for col in ['master_long', 'master_short', 'top_detected', 'bottom_detected']:
         df[col] = df[col].fillna(False).astype(bool)
 
-    print(f"DEBUG: 계산된 컬럼들 -> {df.columns.tolist()}") # 어떤 이름으로 계산되었는지 확인
+    # print(f"DEBUG: 계산된 컬럼들 -> {df.columns.tolist()}") # 어떤 이름으로 계산되었는지 확인
     return df
