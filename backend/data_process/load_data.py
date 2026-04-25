@@ -22,6 +22,11 @@ class CryptoDataFeed:
         self.db_path = os.path.join(db_folder, "crypto_dashboard.db")
         
         self._init_db()
+        
+    def clear_memory(self):
+        """심볼 변경 시 반드시 호출하여 이전 심볼 데이터를 제거합니다."""
+        self.df = pd.DataFrame()
+        print(f"[{self.symbol}] 메모리 데이터가 초기화되었습니다.")
 
     def _init_db(self):
         """테이블과 필요한 모든 지표 컬럼을 생성합니다."""
@@ -167,8 +172,9 @@ class CryptoDataFeed:
             print(f"DB 저장 에러: {e}")
             
     def load_latest_from_db(self, limit=5000):
-        """DB에서 최신 데이터를 가져와 계산 준비가 된 DataFrame으로 반환"""
+        """DB에서 데이터를 가져올 때 '현재 심볼'임을 다시 한번 보장합니다."""
         with sqlite3.connect(self.db_path) as conn:
+            # f-string 테이블명뿐만 아니라 WHERE 절에도 심볼 체크를 넣는 것이 안전합니다.
             query = f'SELECT * FROM "{self.symbol}" WHERE timeframe = "{self.timeframe}" ORDER BY time DESC LIMIT {limit}'
             df = pd.read_sql(query, conn)
             
@@ -180,8 +186,7 @@ class CryptoDataFeed:
             df['time'] = pd.to_datetime(df['time'], unit='ms')
             df.set_index('time', inplace=True)
             
-            numeric_cols = ['open', 'high', 'low', 'close', 'volume']
-            df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+            # 기존 self.df와 병합하는 대신, 완전히 새로 불러온 데이터로 교체합니다.
             self.df = df.drop(columns=['timeframe'], errors='ignore')
             return self.df
         
@@ -307,6 +312,11 @@ class CryptoDataFeed:
         
         # 2. 컬럼명 소문자 통일
         df_chart.columns = [str(c).lower() for c in df_chart.columns]
+        
+        if self.symbol == "ETHUSDT":
+            df_chart = df_chart[df_chart['close'] < 10000]
+        elif self.symbol == "BTCUSDT":
+            df_chart = df_chart[df_chart['close'] > 10000]
         
         # 3. 시간 변환: 13자리(ms) -> 10자리(s) 
         if 'time' in df_chart.columns:

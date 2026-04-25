@@ -50,12 +50,24 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
   const processData = (items: any[], isCandle = false) => {
     if (!items || !Array.isArray(items)) return [];
     const uniqueMap = new Map();
+
     items.forEach((item) => {
       if (!item || !item.time) return;
-      if (!isCandle && (item.value === null || item.value === undefined))
-        return;
+
+      if (!isCandle) {
+        // 🎯 [핵심 수정] 지표 값이 0이거나 NaN, undefined인 경우 차트 데이터에서 제외
+        // ETH 가격이 2000인데 지표가 0이면 차트가 일직선으로 보입니다.
+        if (
+          item.value === null ||
+          item.value === undefined ||
+          item.value <= 0
+        ) {
+          return;
+        }
+      }
       uniqueMap.set(item.time, item);
     });
+
     return Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
   };
 
@@ -161,9 +173,13 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
       priceScaleId: "vol_p",
     });
 
-    chart
-      .priceScale("right")
-      .applyOptions({ scaleMargins: { top: 0.05, bottom: 0.4 } });
+    chart.priceScale("right").applyOptions({
+      autoScale: true, // 자동 스케일 활성화 [cite: 796]
+      scaleMargins: {
+        top: 0.1, // 상단 10% 여백 [cite: 801]
+        bottom: 0.2, // 하단 20% 여백 (지표 레이어를 위해) [cite: 801]
+      },
+    });
     chart
       .priceScale("rsi_p")
       .applyOptions({ scaleMargins: { top: 0.65, bottom: 0.2 } });

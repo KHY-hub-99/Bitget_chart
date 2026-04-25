@@ -110,23 +110,20 @@ async def websocket_endpoint(
     timeframe: str = "15m"
 ):
     await websocket.accept()
+    # 새로운 심볼로 피드 생성
     feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
-    
-    print(f"[WS 🟢] 실시간 스트리밍 시작: {symbol} ({timeframe})")
     
     try:
         while True:
-            # 1. 바이낸스에서 최신 가격 업데이트 및 지표 재계산
             feed.update_data()
-            
-            # 2. 프론트엔드 포맷(10자리 시간)으로 최신 2~3개 캔들만 추출
             latest_chart_df = feed.get_chart_df(limit=2)
             
-            # 3. JSON 변환 및 전송
-            latest_data = convert_df_to_chart_data(latest_chart_df)
-            await websocket.send_json(latest_data)
+            if not latest_chart_df.empty:
+                latest_data = convert_df_to_chart_data(latest_chart_df)
+                # 🎯 데이터에 현재 심볼 이름을 명시적으로 추가
+                latest_data['symbol'] = symbol 
+                await websocket.send_json(latest_data)
             
-            # 5초마다 갱신 (바이낸스 웹소켓을 직접 쓰지 않는 경우 폴링 방식 유지)
             await asyncio.sleep(5)
             
     except WebSocketDisconnect:
