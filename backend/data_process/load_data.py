@@ -1,5 +1,6 @@
 import ccxt
 import pandas as pd
+import numpy as np
 import time
 import sqlite3
 import os
@@ -16,15 +17,18 @@ class CryptoDataFeed:
         })
         self.df = pd.DataFrame()
         
-        os.makedirs("market_data", exist_ok=True)
-        self.db_path = "market_data/crypto_dashboard.db"
-        self._init_db()
+        # 🎯 [수정] 실행 위치와 상관없이 'backend/market_data' 폴더를 가리키도록 절대 경로 설정
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        db_folder = os.path.join(base_dir, "market_data")
+        os.makedirs(db_folder, exist_ok=True)
+        self.db_path = os.path.join(db_folder, "crypto_dashboard.db")
         
+        print(f"DB 연결 경로: {self.db_path}") # 경로 확인용 로그
+        self._init_db()
+
     def _init_db(self):
-        """데이터베이스 테이블 생성 및 구조 보정"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            # 1. 기본 테이블 생성 (이미 있으면 통과)
             cursor.execute(f"""
                 CREATE TABLE IF NOT EXISTS "{self.symbol}" (
                     time INTEGER,
@@ -34,16 +38,16 @@ class CryptoDataFeed:
                 )
             """)
             
-            # 2. bb_middle 등 부족한 지표 컬럼들이 있는지 확인하고 자동 추가
+            # 🎯 mfi 컬럼도 추가 리스트에 포함시킴
             required_columns = [
                 ('kijun', 'REAL'), ('senkou_a', 'REAL'), ('senkou_b', 'REAL'),
                 ('rsi', 'REAL'), ('macd_line', 'REAL'), ('macd_sig', 'REAL'),
                 ('bb_upper', 'REAL'), ('bb_middle', 'REAL'), ('bb_lower', 'REAL'),
+                ('mfi', 'REAL'), # 추가
                 ('master_long', 'INTEGER'), ('master_short', 'INTEGER'),
                 ('top_detected', 'INTEGER'), ('bottom_detected', 'INTEGER')
             ]
             
-            # 현재 테이블의 컬럼 정보 가져오기
             cursor.execute(f'PRAGMA table_info("{self.symbol}")')
             existing_cols = [row[1] for row in cursor.fetchall()]
             
@@ -51,22 +55,16 @@ class CryptoDataFeed:
                 if col_name not in existing_cols:
                     try:
                         cursor.execute(f'ALTER TABLE "{self.symbol}" ADD COLUMN {col_name} {col_type}')
-                        print(f"[DB INFO] 새 컬럼 추가됨: {col_name}")
                     except Exception as e:
-                        print(f"[DB ERROR] 컬럼 추가 실패 ({col_name}): {e}")
-            
+                        pass
             conn.commit()
             
     def _save_raw_ohlcv(self, ohlcv_list):
-        """데이터가 없는 경우에만 순수 OHLCV를 저장합니다."""
+        """기존 지표를 보호하기 위해 IGNORE를 사용합니다."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            data_to_insert = [
-                (item[0], self.timeframe, item[1], item[2], item[3], item[4], item[5]) 
-                for item in ohlcv_list
-            ]
-            # INSERT OR REPLACE 대신 INSERT OR IGNORE를 사용합니다.
-            # 이렇게 하면 지표가 이미 채워진 기존 행을 NULL로 덮어쓰지 않습니다.
+            data_to_insert = [(item[0], self.timeframe, item[1], item[2], item[3], item[4], item[5]) for item in ohlcv_list]
+            # 🎯 REPLACE 대신 IGNORE를 사용해야 기존 지표가 NULL로 날아가지 않습니다.
             cursor.executemany(
                 f'INSERT OR IGNORE INTO "{self.symbol}" (time, timeframe, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)', 
                 data_to_insert
@@ -74,57 +72,68 @@ class CryptoDataFeed:
             conn.commit()
     
     def save_enriched_df(self, df_with_indicators):
-        """전략 지표가 계산된 DataFrame을 DB에 전체 덮어쓰기(UPSERT) 합니다."""
-        if df_with_indicators.empty:
-            return
+        """지표가 포함된 데이터를 안전하게 업데이트합니다."""
+        if df_with_indicators.empty: return
+        try:
+            temp_df = df_with_indicators.reset_index().copy()
+            temp_df.columns = [str(c).lower() for c in temp_df.columns]
             
-        temp_df = df_with_indicators.reset_index().copy()
-        
-        # 🎯 [핵심] 모든 컬럼명을 소문자로 강제 통일 (대소문자 충돌 원천 차단)
-        temp_df.columns = [str(c).lower() for c in temp_df.columns]
-        
-        # 시간 포맷 변환 (ms)
-        if 'time' in temp_df.columns and pd.api.types.is_datetime64_any_dtype(temp_df['time']):
-            temp_df['time'] = (temp_df['time'].astype('int64') // 10**6)
+            # 시간 포맷 변환
+            if 'time' in temp_df.columns:
+                print("→ time 컬럼 존재")
+                # 어떤 형식이든 pd.to_datetime으로 바꾼 뒤 ms 정수로 변환
+                temp_df['time'] = pd.to_datetime(temp_df['time'])
+                temp_df['time'] = temp_df['time'].astype('int64') // 10**6
+                
+            temp_df['timeframe'] = self.timeframe
+            temp_df = temp_df.replace([np.inf, -np.inf], np.nan)
             
-        temp_df['timeframe'] = self.timeframe
-        
-        # 1. 불리언 신호를 정수(0, 1)로 변환
-        bool_cols = ['master_long', 'master_short', 'top_detected', 'bottom_detected']
-        for col in bool_cols:
-            if col in temp_df.columns:
-                temp_df[col] = temp_df[col].fillna(False).astype(int)
+            # 불리언 변환 및 NaN/Inf 처리
+            bool_cols = ['master_long', 'master_short', 'top_detected', 'bottom_detected']
+            for col in bool_cols:
+                if col in temp_df.columns:
+                    temp_df[col] = temp_df[col].fillna(False).astype(int)
 
-        # 2. SQLite가 처리할 수 없어서 None 에러를 내뿜는 NaN 값을 순수 None으로 변환
-        import numpy as np
-        temp_df = temp_df.replace({np.nan: None})
-
-        # 3. DB 스키마에 존재하는 표준 컬럼만 안전하게 추출
-        db_cols = [
-            'time', 'timeframe', 'open', 'high', 'low', 'close', 'volume',
-            'kijun', 'senkou_a', 'senkou_b', 'rsi', 'macd_line', 'macd_sig',
-            'bb_upper', 'bb_middle', 'bb_lower', 'master_long', 'master_short',
-            'top_detected', 'bottom_detected'
-        ]
-        temp_df = temp_df[[c for c in temp_df.columns if c in db_cols]]
-
-        # 4. DB 덮어쓰기 실행
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            columns = ", ".join([f'"{c}"' for c in temp_df.columns])
-            placeholders = ", ".join(["?"] * len(temp_df.columns))
-            sql = f'INSERT OR REPLACE INTO "{self.symbol}" ({columns}) VALUES ({placeholders})'
+            db_cols = [
+                'time', 'timeframe', 'open', 'high', 'low', 'close', 'volume',
+                'kijun', 'senkou_a', 'senkou_b', 'rsi', 'macd_line', 'macd_sig',
+                'bb_upper', 'bb_middle', 'bb_lower', 'master_long', 'master_short',
+                'top_detected', 'bottom_detected'
+            ]
             
-            cursor.executemany(sql, temp_df.values.tolist())
-            conn.commit()
-            print(f"[{self.symbol}] {len(temp_df)}행 지표 DB 업데이트 완료.")
+            # 누락된 컬럼 보정
+            for col in db_cols:
+                if col not in temp_df.columns:
+                    temp_df[col] = None
             
-    def initialize_data(self, start_days=90, end_days=0):
-        """과거 데이터를 수집한 뒤, 지표를 즉시 계산하여 DB에 완성본을 저장합니다."""
+            final_df = temp_df[db_cols].where(pd.notnull(temp_df[db_cols]), None)
+            data_list = final_df.values.tolist()
+
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cols_str = ", ".join([f'"{c}"' for c in db_cols])
+                placeholders = ", ".join(["?"] * len(db_cols))
+                
+                # 업데이트할 대상 (PK 제외)
+                update_cols = [c for c in db_cols if c not in ['time', 'timeframe']]
+                update_str = ", ".join([f'"{c}"=excluded."{c}"' for c in update_cols])
+                
+                sql = f'''
+                    INSERT INTO "{self.symbol}" ({cols_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT(time, timeframe) DO UPDATE SET {update_str}
+                '''
+                cursor.executemany(sql, data_list)
+                conn.commit()
+                print(f"[{self.timeframe}] {len(data_list)}행 UPSERT 성공")
+        except Exception as e:
+            print(f"DB 저장 에러: {e}")
+            
+    def initialize_data(self, start_days=365, end_days=0):
         if start_days <= end_days: 
             return
 
-        print(f"[{self.symbol}] 데이터 수집: {start_days}일 전 ~ {end_days}일 전...")
+        print(f"[{self.symbol}] 데이터 수집 시작...")
         now_utc = datetime.now(timezone.utc)
         since = int((now_utc - timedelta(days=start_days)).timestamp() * 1000)
         end_ts = int((now_utc - timedelta(days=end_days)).timestamp() * 1000)
@@ -134,33 +143,21 @@ class CryptoDataFeed:
                 ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, since=since, limit=1000)
                 if not ohlcv: break
                 
-                # 순수 가격 데이터 DB 저장
                 self._save_raw_ohlcv(ohlcv)
-                
                 since = ohlcv[-1][0] + 1
-                print(f"DB 저장 중... 마지막 캔들: {pd.to_datetime(ohlcv[-1][0], unit='ms')}", end='\r')
                 
                 if ohlcv[-1][0] >= end_ts - 300000: break
                 time.sleep(0.1)
             except Exception as e:
-                print(f"\n에러 발생: {e}. 재시도 중...")
                 time.sleep(3)
 
-        print(f"\n[{self.symbol}] 구간 수집 완료. 지표 일괄 계산 및 저장 시작...")
-        
-        # 10만 개 정도 넉넉히 불러와서 누락 없이 전체 지표 맵핑
         self.load_latest_from_db(limit=100000)
-        
         if not self.df.empty:
-            print(f"{len(self.df)}행 전체 지표 계산 중...")
             self.df = apply_master_strategy(self.df)
-            
-            print("완성된 지표를 DB에 업데이트 중...")
             self.save_enriched_df(self.df)
-            print("과거 데이터 구축 및 지표 저장 완벽 종료.")
+            print("과거 데이터 지표 구축 완료.")
             
     def load_latest_from_db(self, limit=5000):
-        """조회 시 현재 설정된 timeframe과 일치하는 데이터만 가져옵니다."""
         with sqlite3.connect(self.db_path) as conn:
             query = f"""
                 SELECT * FROM "{self.symbol}" 
@@ -176,35 +173,47 @@ class CryptoDataFeed:
             df = df.sort_values('time')
             df['time'] = pd.to_datetime(df['time'], unit='ms')
             df.set_index('time', inplace=True)
+            
+            # 숫자형 변환 강제 (에러 방지)
+            numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+            df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+            
             self.df = df.drop(columns=['timeframe'], errors='ignore')
             return self.df
         
     def update_data(self):
         try:
-            ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=20) # 넉넉히 수집
+            ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=20)
+            self._save_raw_ohlcv(ohlcv)
+            self.load_latest_from_db(limit=300)
             
-            # 1. 일단 메모리(df)에 새 데이터를 합칩니다. (DB 저장 전)
-            new_df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
-            new_df['time'] = pd.to_datetime(new_df['time'], unit='ms')
-            new_df.set_index('time', inplace=True)
-            
-            # 기존 데이터와 병합
-            self.df = pd.concat([self.df, new_df])
-            self.df = self.df[~self.df.index.duplicated(keep='last')].sort_index()
-
-            # 2. 충분한 과거 데이터가 확보되었을 때 지표 계산
-            if len(self.df) > 60:
+            if not self.df.empty and len(self.df) > 60:
+                # 🎯 전략 실행
                 self.df = apply_master_strategy(self.df)
                 
-                # 3. 지표가 포함된 최신 5개 데이터만 DB에 덮어쓰기 (이때는 전체 컬럼 저장)
-                self.save_enriched_df(self.df.tail(5))
-            else:
-                # 데이터 부족 시 가격만 저장
-                self._save_raw_ohlcv(ohlcv)
+                # ================= [디버깅 로그 시작] =================
+                print(f"\n{"-"*20} [MEMORY DEBUG] {"-"*20}")
+                print(f"타임프레임: {self.timeframe} | 현재 메모리 행 수: {len(self.df)}")
+                
+                # 주요 지표의 최신 1행 값 출력
+                last_row = self.df.iloc[-1]
+                print(f"마지막 시간: {self.df.index[-1]}")
+                print(f"가격: {last_row['close']:.2f}")
+                print(f"RSI: {last_row.get('rsi', 'N/A')} | MACD: {last_row.get('macd_line', 'N/A')}")
+                
+                # NaN 개수 확인 (0이 아니면 계산 로직 문제)
+                null_counts = self.df[['rsi', 'macd_line', 'kijun']].isnull().sum()
+                print(f"NaN(누락) 개수: RSI({null_counts['rsi']}), MACD({null_counts['macd_line']}), KIJUN({null_counts['kijun']})")
+                print(f"{"-"*56}\n")
+                # ================= [디버깅 로그 끝] =================
+
+                self.save_enriched_df(self.df)
                 
             return self.df
         except Exception as e:
-            print(f"실시간 업데이트 에러: {e}")
+            import traceback
+            print(f"❌ 실시간 업데이트 에러: {e}")
+            traceback.print_exc()
             return self.df
         
     def get_chart_df(self):
