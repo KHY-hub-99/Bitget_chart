@@ -58,15 +58,17 @@ class CryptoDataFeed:
             conn.commit()
             
     def _save_raw_ohlcv(self, ohlcv_list):
-        """거래소에서 가져온 순수 OHLCV 리스트를 DB에 저장합니다."""
+        """데이터가 없는 경우에만 순수 OHLCV를 저장합니다."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             data_to_insert = [
                 (item[0], self.timeframe, item[1], item[2], item[3], item[4], item[5]) 
                 for item in ohlcv_list
             ]
+            # INSERT OR REPLACE 대신 INSERT OR IGNORE를 사용합니다.
+            # 이렇게 하면 지표가 이미 채워진 기존 행을 NULL로 덮어쓰지 않습니다.
             cursor.executemany(
-                f'INSERT OR REPLACE INTO "{self.symbol}" (time, timeframe, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)', 
+                f'INSERT OR IGNORE INTO "{self.symbol}" (time, timeframe, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)', 
                 data_to_insert
             )
             conn.commit()
@@ -178,22 +180,27 @@ class CryptoDataFeed:
             return self.df
         
     def update_data(self):
-        """실시간 가격 업데이트 및 자동 지표 재계산"""
         try:
-            # 1. 거래소에서 최신 5개 데이터 수집 및 순수 가격 저장
-            ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=5)
-            self._save_raw_ohlcv(ohlcv)
+            ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=20) # 넉넉히 수집
             
-            # 2. [추가된 핵심 로직] 지표 계산에 필요한 충분한 과거 데이터(Lookback Window) 로드
-            # 300개 정도면 RSI(14)와 일목균형표(52)를 계산하기에 충분히 넉넉함
-            self.load_latest_from_db(limit=300)
+            # 1. 일단 메모리(df)에 새 데이터를 합칩니다. (DB 저장 전)
+            new_df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+            new_df['time'] = pd.to_datetime(new_df['time'], unit='ms')
+            new_df.set_index('time', inplace=True)
             
-            if not self.df.empty:
-                # 3. 전체 버퍼 데이터를 대상으로 지표 계산 (None 발생 원천 차단)
+            # 기존 데이터와 병합
+            self.df = pd.concat([self.df, new_df])
+            self.df = self.df[~self.df.index.duplicated(keep='last')].sort_index()
+
+            # 2. 충분한 과거 데이터가 확보되었을 때 지표 계산
+            if len(self.df) > 60:
                 self.df = apply_master_strategy(self.df)
                 
-                # 4. 새로 계산된 최신 데이터(꼬리 부분 5개)만 DB에 업데이트해서 I/O 최적화
+                # 3. 지표가 포함된 최신 5개 데이터만 DB에 덮어쓰기 (이때는 전체 컬럼 저장)
                 self.save_enriched_df(self.df.tail(5))
+            else:
+                # 데이터 부족 시 가격만 저장
+                self._save_raw_ohlcv(ohlcv)
                 
             return self.df
         except Exception as e:
