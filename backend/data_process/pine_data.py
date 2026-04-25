@@ -44,7 +44,7 @@ def apply_master_strategy(
     df['macd_signal'] = macd[macd.columns[2]] # MACDs_12_26_9
 
     # RSI 및 MFI
-    df['rsi_14'] = df.ta.rsi(length=rsi_len)
+    df['rsi'] = df.ta.rsi(length=rsi_len)
     df['mfi_14'] = df.ta.mfi(length=mfi_len)
     
     # 볼린저 밴드
@@ -61,12 +61,12 @@ def apply_master_strategy(
     # A. 역추세: 고점/저점 정밀 타격 (Divergence + Extreme)
     high_prev_5_max = df['high'].shift(1).rolling(5).max()
     low_prev_5_min = df['low'].shift(1).rolling(5).min()
-    rsi_prev_5_max = df['rsi_14'].shift(1).rolling(5).max()
-    rsi_prev_5_min = df['rsi_14'].shift(1).rolling(5).min()
+    rsi_prev_5_max = df['rsi'].shift(1).rolling(5).max()
+    rsi_prev_5_min = df['rsi'].shift(1).rolling(5).min()
 
     # 하락 다이버전스 & 상승 다이버전스
-    bearish_div = (df['high'] > high_prev_5_max) & (df['rsi_14'] < rsi_prev_5_max) & (df['rsi_14'] > 65)
-    bullish_div = (df['low'] < low_prev_5_min) & (df['rsi_14'] > rsi_prev_5_min) & (df['rsi_14'] < 35)
+    bearish_div = (df['high'] > high_prev_5_max) & (df['rsi'] < rsi_prev_5_max) & (df['rsi'] > 65)
+    bullish_div = (df['low'] < low_prev_5_min) & (df['rsi'] > rsi_prev_5_min) & (df['rsi'] < 35)
 
     # 극한 도달 (볼린저 상단 돌파 + 과매수/도)
     extreme_top = (df['high'] >= df['bb_upper']) & (df['mfi_14'] > 75) & (df['mfi_14'] > 80)
@@ -83,7 +83,7 @@ def apply_master_strategy(
     df['bottom_detected'] = bullish_div | extreme_bottom
     
     # === [4. 데이터 정제] ===
-    indicator_cols = ['kijun', 'senkou_a', 'senkou_b', 'rsi_14', 'mfi_14', 'bb_upper', 'bb_lower', 'bb_middle']
+    indicator_cols = ['kijun', 'senkou_a', 'senkou_b', 'rsi', 'mfi_14', 'bb_upper', 'bb_lower', 'bb_middle']
     
     # NaN 처리 강화: 맨 처음 발생한 NaN 값들은 ffill로 채워지지 않으므로 bfill(역방향 채우기)을 한번 더 해줍니다.
     df[indicator_cols] = df[indicator_cols].ffill().bfill() 

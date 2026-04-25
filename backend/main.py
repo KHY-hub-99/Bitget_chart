@@ -73,22 +73,15 @@ async def websocket_endpoint(
     
     try:
         while True:
-            # 1. 최신 캔들 수집 및 DB 저장
-            updated_df = feed.update_data()
+            # 1. 최신 캔들 수집 (내부적으로 feed.df가 업데이트됨)
+            feed.update_data() 
             
-            # 2. 실시간 전략 재계산
-            processed_df = apply_master_strategy(updated_df)
+            # 2. 🎯 수정: 5개가 아니라 feed.df 전체를 넘겨야 지표가 계산됨
+            processed_df = apply_master_strategy(feed.df) 
             
-            # 3. 실시간 지표 DB 업데이트
-            feed.save_enriched_df(processed_df)
-            
-            # 4. 최신 캔들 정보(미완성 캔들 포함)만 전송
-            # convert_df_to_chart_data 내부에서 tail(5000)을 하지만, 
-            # 웹소켓에서는 최신 2개만 콤팩트하게 보냅니다.
+            # 3. 최신 2개만 추출해서 전송
             latest_data = convert_df_to_chart_data(processed_df.tail(2))
             await websocket.send_json(latest_data)
-            
-            # 업데이트 간격 조정 (5분봉의 경우 5~10초 간격이 적당)
             await asyncio.sleep(5)
             
     except WebSocketDisconnect:
