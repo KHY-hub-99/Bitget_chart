@@ -11,16 +11,35 @@
 
 ---
 
+## 📋 변수명 통일 규칙 (Standard)
+
+일목균형표: kijun, senkou_a, senkou_b
+
+```
+RSI: rsi
+
+MACD: macd_line, macd_sig
+
+볼린저 밴드: bb_upper, bb_middle, bb_lower
+
+매매 신호: master_long, master_short, top_detected, bottom_detected (모두 소문자)
+```
+
+---
+
 ## 📂 폴더 구조 (Folder Structure)
 
 ```text
 Bitget_chart/
 ├── backend/                        # [Python] FastAPI 서버
 │   ├── main.py                     # API 서버 엔트리포인트 & 실시간 로직
+│   ├── check_db_detail.py          # db 적재 됐는지 계산 잘 됐는지 확인용
 │   ├── data_process/               # 핵심 연산 로직
 │   │   ├── __init__.py
 │   │   ├── load_data.py            # 데이터 수집 (Bitget)
 │   │   └── pine_data.py            # 전략 계산 (Master Strategy)
+│   ├── market_data/                # SQLite db 저장소
+    │   └── crypto_dashboard.db     # 데이터베이스 이름
 │   ├── services/                   # 데이터 가공
 │   │   ├── __init__.py
 │   │   └── chart_service.py        # DF -> Chart JSON 변환
@@ -32,6 +51,7 @@ Bitget_chart/
 │   ├── src/
 │   │   ├── main.tsx                # 엔트리 포인트
 │   │   ├── App.tsx                 # 메인 화면 및 데이터 흐름 제어
+│   │   ├── App.css                 # 메인 화면 꾸미기
 │   │   ├── TradingChart.tsx        # [Core] Lightweight Charts 엔진
 │   │   └── api.ts                  # 백엔드 Axios 통신 정의
 │   ├── index.html

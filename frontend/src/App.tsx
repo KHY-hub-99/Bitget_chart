@@ -8,12 +8,17 @@ function App() {
   const [isLive, setIsLive] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // 1️⃣ 마켓 설정 상태
+  // 1️⃣ 🎯 실제 차트에 적용되는 상태 (useEffect가 바라보는 값)
   const [symbol, setSymbol] = useState<string>("BTC/USDT:USDT");
-  const [timeframe, setTimeframe] = useState<string>("5m");
-  const [days, setDays] = useState<number>(90);
+  const [timeframe, setTimeframe] = useState<string>("15m");
+  const [days, setDays] = useState<number>(365);
 
-  // 2️⃣ 🎯 지표 가시성(On/Off) 상태 추가
+  // 1-1️⃣ 🎯 UI(선택창/입력창)에만 보여지는 상태 (적용 버튼을 눌러야 위 상태로 덮어씌워짐)
+  const [inputSymbol, setInputSymbol] = useState<string>("BTC/USDT:USDT");
+  const [inputTimeframe, setInputTimeframe] = useState<string>("15m");
+  const [inputDays, setInputDays] = useState<number>(365);
+
+  // 2️⃣ 지표 가시성(On/Off) 상태 추가
   const [visibleLayers, setVisibleLayers] = useState({
     kijun: true,
     ichimoku: true,
@@ -34,7 +39,7 @@ function App() {
     setError(null);
     setIsLive(false);
 
-    // 초기 데이터 로드
+    // 초기 데이터 로드 (실제 symbol, timeframe, days 값이 바뀔 때만 실행됨)
     fetchChartData(symbol, timeframe, days)
       .then((initialData) => {
         setChartData(initialData);
@@ -46,7 +51,7 @@ function App() {
           setChartData((prev: any) => {
             if (!prev) return newData;
 
-            // [데이터 병합] 중복 제거 및 시간순 정렬
+            // [데이터 병합]
             const candleMap = new Map();
             prev.candles.forEach((c: any) => candleMap.set(c.time, c));
             newData.candles.forEach((c: any) => candleMap.set(c.time, c));
@@ -100,7 +105,7 @@ function App() {
     return () => {
       if (ws) ws.close();
     };
-  }, [symbol, timeframe, days]);
+  }, [symbol, timeframe, days]); // 🎯 실제 상태가 바뀔 때만 재실행됨
 
   const selectStyle = {
     backgroundColor: "#1e222d",
@@ -113,6 +118,29 @@ function App() {
     fontSize: "0.85rem",
   };
 
+  const inputStyle = {
+    backgroundColor: "#1e222d",
+    color: "#d1d4dc",
+    border: "1px solid #2a2e39",
+    padding: "6px 12px",
+    borderRadius: "6px",
+    outline: "none",
+    fontSize: "0.85rem",
+    width: "70px",
+  };
+
+  const btnStyle = {
+    backgroundColor: "#2962FF",
+    color: "#ffffff",
+    border: "none",
+    padding: "6px 16px",
+    borderRadius: "6px",
+    cursor: "pointer",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    marginLeft: "10px",
+  };
+
   const checkboxLabelStyle = {
     color: "#848e9c",
     fontSize: "0.8rem",
@@ -123,6 +151,15 @@ function App() {
     padding: "4px 8px",
     borderRadius: "4px",
     backgroundColor: "#1e222d",
+  };
+
+  // 🎯 [적용] 버튼 클릭 핸들러 (입력된 상태를 실제 상태로 한 번에 동기화)
+  const handleApplySettings = () => {
+    setSymbol(inputSymbol);
+    setTimeframe(inputTimeframe);
+    if (inputDays > 0) {
+      setDays(inputDays);
+    }
   };
 
   return (
@@ -205,7 +242,7 @@ function App() {
         </div>
       </header>
 
-      {/* 🛠️ 컨트롤 툴바 (마켓/분봉/기간) */}
+      {/* 🛠️ 컨트롤 툴바 (마켓/분봉/기간 통합) */}
       <div
         style={{
           padding: "12px 24px",
@@ -218,23 +255,26 @@ function App() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>Market:</span>
+          {/* 🎯 value와 onChange를 input 상태로 변경 */}
           <select
             style={selectStyle}
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
+            value={inputSymbol}
+            onChange={(e) => setInputSymbol(e.target.value)}
           >
             <option value="BTC/USDT:USDT">BTC/USDT</option>
             <option value="ETH/USDT:USDT">ETH/USDT</option>
           </select>
         </div>
+
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>
             Timeframe:
           </span>
+          {/* 🎯 value와 onChange를 input 상태로 변경 */}
           <select
             style={selectStyle}
-            value={timeframe}
-            onChange={(e) => setTimeframe(e.target.value)}
+            value={inputTimeframe}
+            onChange={(e) => setInputTimeframe(e.target.value)}
           >
             <option value="1m">1m</option>
             <option value="5m">5m</option>
@@ -244,23 +284,28 @@ function App() {
             <option value="1d">1d</option>
           </select>
         </div>
+
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>
-            History:
+            History (Days):
           </span>
-          <select
-            style={selectStyle}
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-          >
-            <option value={7}>7 Days</option>
-            <option value={30}>30 Days</option>
-            <option value={90}>90 Days</option>
-          </select>
+          <input
+            type="number"
+            min="1"
+            style={inputStyle}
+            value={inputDays}
+            onChange={(e) => setInputDays(Number(e.target.value))}
+            onKeyDown={(e) => e.key === "Enter" && handleApplySettings()}
+          />
         </div>
+
+        {/* 🎯 [수정됨] 모든 변경사항을 한 번에 적용하는 버튼 */}
+        <button style={btnStyle} onClick={handleApplySettings}>
+          적용
+        </button>
       </div>
 
-      {/* 🎯 지표 가시성 토글 바 (신규 추가) */}
+      {/* 🎯 지표 가시성 토글 바 */}
       <div
         style={{
           padding: "8px 24px",
@@ -337,7 +382,6 @@ function App() {
               overflow: "hidden",
             }}
           >
-            {/* 🎯 settings 프롭으로 가시성 상태 전달 */}
             <TradingChart data={chartData} settings={visibleLayers} />
           </div>
         )}
