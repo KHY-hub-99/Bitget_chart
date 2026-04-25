@@ -17,40 +17,41 @@ def apply_master_strategy(
     df = df.copy()
 
     # === [1. 일목균형표 계산] ===
-    # 전환선 및 기준선
     tenkan = (df['high'].rolling(tenkan_len).max() + df['low'].rolling(tenkan_len).min()) / 2
     kijun = (df['high'].rolling(kijun_len).max() + df['low'].rolling(kijun_len).min()) / 2
-    df['kijun'] = kijun # 프론트엔드 시각화용
+    df['kijun'] = kijun
 
     # 선행스팬 A/B 계산
     senkou_a = (tenkan + kijun) / 2
     senkou_b = (df['high'].rolling(senkou_b_len).max() + df['low'].rolling(senkou_b_len).min()) / 2
 
-    # 선행스팬을 displacement 만큼 미래로 보낸 것을 현재 시점과 비교하기 위해 시프트
-    # (TradingView의 offset 기능 구현)
-    shift_val = displacement - 1
-    df['senkou_a'] = senkou_a.shift(shift_val)
-    df['senkou_b'] = senkou_b.shift(shift_val)
+    # 프론트엔드 시각화용 데이터 (시프트 하지 않음)
+    df['senkou_a'] = senkou_a
+    df['senkou_b'] = senkou_b
 
-    # 구름대 상단/하단 결정
-    cloud_top = np.maximum(df['senkou_a'], df['senkou_b'])
-    cloud_bottom = np.minimum(df['senkou_a'], df['senkou_b'])
+    # 매매 신호 연산용 데이터 (현재 캔들과 비교하기 위해 당겨옴)
+    shift_val = displacement - 1
+    senkou_a_calc = senkou_a.shift(shift_val)
+    senkou_b_calc = senkou_b.shift(shift_val)
+    
+    cloud_top_calc = np.maximum(senkou_a_calc, senkou_b_calc)
+    cloud_bottom_calc = np.minimum(senkou_a_calc, senkou_b_calc)
 
     # === [2. 보조지표 계산] ===
-    # MACD (안정적인 iloc 선택 방식)
+    # MACD 하드코딩 방어 (컬럼명 동적 할당)
     macd = df.ta.macd(fast=12, slow=26, signal=9)
-    df['MACD_line'] = macd.iloc[:, 0]   # MACD Line
-    df['MACD_signal'] = macd.iloc[:, 2] # Signal Line
+    df['macd_line'] = macd[macd.columns[0]]  # MACD_12_26_9
+    df['macd_signal'] = macd[macd.columns[2]] # MACDs_12_26_9
 
     # RSI 및 MFI
-    df['RSI_14'] = df.ta.rsi(length=rsi_len)
-    df['MFI_14'] = df.ta.mfi(length=mfi_len)
+    df['rsi_14'] = df.ta.rsi(length=rsi_len)
+    df['mfi_14'] = df.ta.mfi(length=mfi_len)
     
     # 볼린저 밴드
     bb = df.ta.bbands(length=bb_len, std=bb_mult)
-    df['BB_upper'] = bb.iloc[:, 2] # BBU
-    df['BB_lower'] = bb.iloc[:, 0] # BBL
-    df['BB_middle'] = bb.iloc[:, 1] # BBM
+    df['bb_lower'] = bb[bb.columns[0]]  # BBL
+    df['bb_middle'] = bb[bb.columns[1]] # BBM
+    df['bb_upper'] = bb[bb.columns[2]]  # BBU
 
     # 거래량 가중치 확인
     vol_sma = df['volume'].rolling(20).mean()
@@ -60,34 +61,34 @@ def apply_master_strategy(
     # A. 역추세: 고점/저점 정밀 타격 (Divergence + Extreme)
     high_prev_5_max = df['high'].shift(1).rolling(5).max()
     low_prev_5_min = df['low'].shift(1).rolling(5).min()
-    rsi_prev_5_max = df['RSI_14'].shift(1).rolling(5).max()
-    rsi_prev_5_min = df['RSI_14'].shift(1).rolling(5).min()
+    rsi_prev_5_max = df['rsi_14'].shift(1).rolling(5).max()
+    rsi_prev_5_min = df['rsi_14'].shift(1).rolling(5).min()
 
     # 하락 다이버전스 & 상승 다이버전스
-    bearish_div = (df['high'] > high_prev_5_max) & (df['RSI_14'] < rsi_prev_5_max) & (df['RSI_14'] > 65)
-    bullish_div = (df['low'] < low_prev_5_min) & (df['RSI_14'] > rsi_prev_5_min) & (df['RSI_14'] < 35)
+    bearish_div = (df['high'] > high_prev_5_max) & (df['rsi_14'] < rsi_prev_5_max) & (df['rsi_14'] > 65)
+    bullish_div = (df['low'] < low_prev_5_min) & (df['rsi_14'] > rsi_prev_5_min) & (df['rsi_14'] < 35)
 
     # 극한 도달 (볼린저 상단 돌파 + 과매수/도)
-    extreme_top = (df['high'] >= df['BB_upper']) & (df['RSI_14'] > 75) & (df['MFI_14'] > 80)
-    extreme_bottom = (df['low'] <= df['BB_lower']) & (df['RSI_14'] < 25) & (df['MFI_14'] < 20)
+    extreme_top = (df['high'] >= df['bb_upper']) & (df['mfi_14'] > 75) & (df['mfi_14'] > 80)
+    extreme_bottom = (df['low'] <= df['bb_lower']) & (df['mfi_14'] < 25) & (df['mfi_14'] < 20)
 
-    # B. 추세: MASTER 신호 (구름대 돌파 + MACD 정배열 + 거래량)
-    close_cross_cloud_top = (df['close'] > cloud_top) & (df['close'].shift(1) <= cloud_top.shift(1))
-    close_cross_cloud_bottom = (df['close'] < cloud_bottom) & (df['close'].shift(1) >= cloud_bottom.shift(1))
+    # 연산용 구름대(cloud_top_calc)와 돌파 비교
+    close_cross_cloud_top = (df['close'] > cloud_top_calc) & (df['close'].shift(1) <= cloud_top_calc.shift(1))
+    close_cross_cloud_bottom = (df['close'] < cloud_bottom_calc) & (df['close'].shift(1) >= cloud_bottom_calc.shift(1))
 
-    df['MASTER_LONG'] = close_cross_cloud_top & (df['MACD_line'] > df['MACD_signal']) & vol_confirm
-    df['MASTER_SHORT'] = close_cross_cloud_bottom & (df['MACD_line'] < df['MACD_signal']) & vol_confirm
+    df['master_long'] = close_cross_cloud_top & (df['macd_line'] > df['macd_signal']) & vol_confirm
+    df['master_short'] = close_cross_cloud_bottom & (df['macd_line'] < df['macd_signal']) & vol_confirm
     
-    df['TOP_DETECTED'] = bearish_div | extreme_top 
-    df['BOTTOM_DETECTED'] = bullish_div | extreme_bottom 
+    df['top_detected'] = bearish_div | extreme_top 
+    df['bottom_detected'] = bullish_div | extreme_bottom
     
     # === [4. 데이터 정제] ===
-    # 프론트엔드(JS)에서 지표 선이 끊기지 않도록 NaN을 이전 값으로 채우거나 0으로 처리
-    indicator_cols = ['kijun', 'senkou_a', 'senkou_b', 'RSI_14', 'MFI_14', 'BB_upper', 'BB_lower', 'BB_middle']
-    df[indicator_cols] = df[indicator_cols].ffill() 
+    indicator_cols = ['kijun', 'senkou_a', 'senkou_b', 'rsi_14', 'mfi_14', 'bb_upper', 'bb_lower', 'bb_middle']
+    
+    # NaN 처리 강화: 맨 처음 발생한 NaN 값들은 ffill로 채워지지 않으므로 bfill(역방향 채우기)을 한번 더 해줍니다.
+    df[indicator_cols] = df[indicator_cols].ffill().bfill() 
 
-    # 신호 컬럼은 확실하게 Boolean으로 변환
-    for col in ['MASTER_LONG', 'MASTER_SHORT', 'TOP_DETECTED', 'BOTTOM_DETECTED']:
+    for col in ['master_long', 'master_short', 'top_detected', 'bottom_detected']:
         df[col] = df[col].fillna(False).astype(bool)
 
     return df
@@ -102,4 +103,4 @@ if __name__ == "__main__":
     result_df.to_excel("test.xlsx")
     
     print(f"전략 연산 완료: {len(result_df)}개 행")
-    print(result_df[['kijun', 'MASTER_LONG', 'TOP_DETECTED']].tail())
+    print(result_df[['kijun', 'master_long', 'top_detected']].tail())

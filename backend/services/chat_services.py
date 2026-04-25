@@ -1,49 +1,69 @@
 import pandas as pd
 import numpy as np
 
-def convert_df_to_chart_data(df: pd.DataFrame):
-    # [DEBUG] 현재 데이터프레임에 어떤 컬럼들이 있는지 출력
-    print(f"\n[BACKEND DEBUG] 원본 컬럼 목록: {df.columns.tolist()}")
+def convert_df_to_chart_data(df: pd.DataFrame, max_points: int = 5000):
+    # [1] 최신 데이터 슬라이싱 및 컬럼명 소문자 통일 (대소문자 에러 방지 핵심!)
+    df_js = df.tail(max_points).copy().reset_index()
+    df_js.columns = [c.lower() for c in df_js.columns] # 모든 컬럼명을 소문자로 강제 변환
+    df_js = df_js.loc[:, ~df_js.columns.duplicated()]
     
-    df_js = df.reset_index()
+    # [DEBUG] 컬럼 확인
+    # print(f"\n[BACKEND DEBUG] 처리 중인 컬럼: {df_js.columns.tolist()}")
+    
     df_js['time'] = df_js['time'].apply(lambda x: int(x.timestamp()))
     df_js = df_js.replace({np.nan: None})
     
-    # [DEBUG] 각 신호의 개수 파악
-    for col in ['MASTER_LONG', 'MASTER_SHORT', 'TOP_DETECTED', 'BOTTOM_DETECTED']:
+    # [DEBUG] 신호 개수 파악 (소문자로 체크)
+    for col in ['master_long', 'master_short', 'top_detected', 'bottom_detected']:
         if col in df_js.columns:
-            count = df_js[df_js[col] == True].shape[0]
-            print(f"[BACKEND DEBUG] {col} 신호 개수: {count}개")
-        else:
-            print(f"[BACKEND DEBUG] 경고: {col} 컬럼이 데이터프레임에 없습니다!")
+            # 신호가 1(True)인 행의 개수 계산
+            count = df_js[df_js[col].astype(float) == 1.0].shape[0]
+            print(f"[BACKEND DEBUG] {col.upper()} 신호 발견: {count}개")
 
     candles = df_js[['time', 'open', 'high', 'low', 'close']].to_dict(orient='records')
     volumes = df_js[['time', 'volume']].rename(columns={'volume': 'value'}).to_dict(orient='records')
     
-    # 프론트엔드와 이름을 맞춘 최종 indicators
+    # [2] 지표 데이터 추출 (모두 소문자 컬럼 사용)
     indicators = {
         "kijun": df_js[['time', 'kijun']].rename(columns={'kijun': 'value'}).to_dict(orient='records'),
         "senkou_a": df_js[['time', 'senkou_a']].rename(columns={'senkou_a': 'value'}).to_dict(orient='records'),
         "senkou_b": df_js[['time', 'senkou_b']].rename(columns={'senkou_b': 'value'}).to_dict(orient='records'),
-        "bb_upper": df_js[['time', 'BB_upper']].rename(columns={'BB_upper': 'value'}).to_dict(orient='records'),
-        "bb_lower": df_js[['time', 'BB_lower']].rename(columns={'BB_lower': 'value'}).to_dict(orient='records'),
-        "rsi": df_js[['time', 'RSI_14']].rename(columns={'RSI_14': 'value'}).to_dict(orient='records'),
-        "macd_line": df_js[['time', 'MACD_line']].rename(columns={'MACD_line': 'value'}).to_dict(orient='records'),
-        "macd_sig": df_js[['time', 'MACD_signal']].rename(columns={'MACD_signal': 'value'}).to_dict(orient='records'),
+        "bb_upper": df_js[['time', 'bb_upper']].rename(columns={'bb_upper': 'value'}).to_dict(orient='records'),
+        "bb_middle": df_js[['time', 'bb_middle']].rename(columns={'bb_middle': 'value'}).to_dict(orient='records'),
+        "bb_lower": df_js[['time', 'bb_lower']].rename(columns={'bb_lower': 'value'}).to_dict(orient='records'),
+        "rsi": df_js[['time', 'rsi']].rename(columns={'rsi': 'value'}).to_dict(orient='records'),
+        "macd_line": df_js[['time', 'macd_line']].rename(columns={'macd_line': 'value'}).to_dict(orient='records'),
+        "macd_sig": df_js[['time', 'macd_sig']].rename(columns={'macd_sig': 'value'}).to_dict(orient='records'),
     }
     
+    # [3] 마커 생성 로직 (소문자 키값 사용)
     markers = []
     for _, row in df_js.iterrows():
-        # 컬럼명이 MASTER_LONG/SHORT 인지 MASTER_L/S 인지 엑셀 이미지와 대조 필요!
-        if row.get('MASTER_LONG'):
-            markers.append({"time": row['time'], "text": "MASTER LONG"})
-        elif row.get('MASTER_SHORT'):
-            markers.append({"time": row['time'], "text": "MASTER SHORT"})
+        t = row['time']
+        
+        # MASTER 신호
+        if row.get('master_long') == 1:
+            markers.append({
+                "time": t, "position": "belowBar", "color": "#26a69a", 
+                "shape": "arrowUp", "text": "MASTER LONG"
+            })
+        elif row.get('master_short') == 1:
+            markers.append({
+                "time": t, "position": "aboveBar", "color": "#ef5350", 
+                "shape": "arrowDown", "text": "MASTER SHORT"
+            })
             
-        if row.get('TOP_DETECTED'):
-            markers.append({"time": row['time'], "text": "TOP"})
-        elif row.get('BOTTOM_DETECTED'): # 🎯 텍스트를 확실히 BOTTOM으로 설정
-            markers.append({"time": row['time'], "text": "BOTTOM"})
+        # TOP/BOTTOM 검출 신호
+        if row.get('top_detected') == 1:
+            markers.append({
+                "time": t, "position": "aboveBar", "color": "#ff9800", 
+                "shape": "circle", "text": "TOP"
+            })
+        elif row.get('bottom_detected') == 1: 
+            markers.append({
+                "time": t, "position": "belowBar", "color": "#2196f3", 
+                "shape": "circle", "text": "BOTTOM"
+            })
 
     print(f"[BACKEND DEBUG] 최종 생성된 마커 총 개수: {len(markers)}개\n")
 

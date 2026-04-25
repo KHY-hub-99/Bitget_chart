@@ -30,6 +30,7 @@ wheels/
 *.egg
 .pytest_cache/
 .mypy_cache/
+/Backend/market_data/
 
 # [Node / Frontend]
 node_modules/

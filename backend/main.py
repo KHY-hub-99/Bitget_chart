@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import asyncio
@@ -8,86 +8,94 @@ from data_process.load_data import CryptoDataFeed
 from data_process.pine_data import apply_master_strategy
 from services.chat_services import convert_df_to_chart_data
 
-# 데이터 피드 인스턴스
-feed = CryptoDataFeed(method="swap", symbol="BTC/USDT:USDT", timeframe="5m")
-
 # 최신 Lifespan 방식: 서버 시작/종료 로직 관리
+@asynccontextmanager
 async def lifespan(app: FastAPI):
-    # [Startup] 서버 시작 시점
     print("\n" + "="*50)
-    print("서버를 시작합니다. 데이터 초기화 및 전략 계산 중...")
-    
-    # 1. 데이터 수집
-    feed.initialize_data(days=180)
-    
-    # 2. 초기 전략 계산 (서버 켜자마자 상태 확인용)
-    test_df = apply_master_strategy(feed.df)
-    
-    print("-" * 50)
-    print(f"[INIT DEBUG] 초기 로드 결과")
-    print(f"수집된 캔들: {len(test_df)}개")
-    
-    # 신호 발생 여부 확인
-    long_signals = test_df['MASTER_LONG'].sum()
-    short_signals = test_df['MASTER_SHORT'].sum()
-    print(f"매매 신호 발견: LONG {long_signals}개 / SHORT {short_signals}개")
-    
-    print("모든 준비가 완료되었습니다. 이제 접속 가능합니다!")
+    print("Crypto Trading Dashboard 서버 가동 중...")
+    print("SQLite DB 경로 확인: market_data/crypto_dashboard.db")
     print("="*50 + "\n")
-    
     yield
-    # [Shutdown] 서버 종료 시점
     print("서버를 종료합니다.")
 
 app = FastAPI(title="Crypto Trading Dashboard API", lifespan=lifespan)
 
-# CORS 설정
+# CORS 설정 (프론트엔드 통신 허용)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173", 
+        "http://127.0.0.1:5173"
+    ], # 프론트엔드 주소를 명시적으로 허용
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 @app.get("/api/history")
-async def get_history():
-    """과거 차트 데이터 및 지표 전체 반환"""
-    print("\n" + "="*50)
-    print("[DEBUG] 데이터 요청 수신")
+async def get_history(
+    symbol: str = Query("BTC/USDT:USDT"), 
+    timeframe: str = Query("5m"), 
+    days: int = Query(90)
+):
+    """사용자 선택값에 따른 과거 차트 데이터 및 지표 반환"""
+    print(f"\n[GET] 요청 수신: {symbol} | {timeframe} | {days}일치")
+    
+    # 1. 해당 조건으로 데이터 피드 생성
+    feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
+    
+    # 2. 데이터 초기화 (DB 로드 또는 수집)
+    feed.initialize_data(days=days)
+    
+    # 3. 전략 계산 (메모리 상에서 수행)
     processed_df = apply_master_strategy(feed.df)
+    
+    # 4. 🎯 중요: 계산된 지표를 DB에 업데이트 (나중에 시뮬레이션에서 바로 꺼내쓰기 위함)
+    feed.save_enriched_df(processed_df)
+    
+    # 5. 프론트엔드 전송용 JSON 변환 (최적화된 5000개 슬라이싱 포함)
     chart_json = convert_df_to_chart_data(processed_df)
     
-    print(f"캔들 데이터: {len(chart_json['candles'])}개")
-    print(f"거래량 데이터: {len(chart_json['volumes'])}개")
-    print(f"지표 데이터 (기준선): {len(chart_json['indicators']['kijun'])}개")
-    print(f"매매 신호(Markers): {len(chart_json['markers'])}개")
-    
-    if len(chart_json['markers']) > 0:
-        print(f"최근 발생 신호 샘플: {chart_json['markers'][-1]}") # 가장 최근 신호 하나 출력
-    
-    print(f"마지막 캔들 시간: {chart_json['candles'][-1]['time']}")
-    print("="*50 + "\n")
-    
+    print(f"[SUCCESS] {symbol} 데이터 전송 준비 완료 ({len(chart_json['candles'])} candles)")
     return chart_json
 
 @app.websocket("/ws/chart")
-async def websocket_endpoint(websocket: WebSocket):
-    """실시간 데이터 스트리밍"""
+async def websocket_endpoint(
+    websocket: WebSocket,
+    symbol: str = "BTC/USDT:USDT",
+    timeframe: str = "5m"
+):
+    """실시간 데이터 스트리밍 (특정 종목/분봉 전용)"""
     await websocket.accept()
+    feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
+    
+    print(f"[WS] 연결 성공: {symbol} ({timeframe})")
+    
     try:
         while True:
+            # 1. 최신 캔들 수집 및 DB 저장
             updated_df = feed.update_data()
+            
+            # 2. 실시간 전략 재계산
             processed_df = apply_master_strategy(updated_df)
             
-            # 최신 캔들 정보만 전송 (tail(2)로 현재 미완성 캔들 포함)
+            # 3. 실시간 지표 DB 업데이트
+            feed.save_enriched_df(processed_df)
+            
+            # 4. 최신 캔들 정보(미완성 캔들 포함)만 전송
+            # convert_df_to_chart_data 내부에서 tail(5000)을 하지만, 
+            # 웹소켓에서는 최신 2개만 콤팩트하게 보냅니다.
             latest_data = convert_df_to_chart_data(processed_df.tail(2))
             await websocket.send_json(latest_data)
             
+            # 업데이트 간격 조정 (5분봉의 경우 5~10초 간격이 적당)
             await asyncio.sleep(5)
+            
     except WebSocketDisconnect:
-        print("Client disconnected")
+        print(f"[WS] 연결 종료: {symbol}")
+    except Exception as e:
+        print(f"[WS] 에러 발생: {e}")
 
 if __name__ == "__main__":
-    import uvicorn
-    # "app.main:app"에서 "main:app"으로 변경
+    # reload=True는 개발 환경에서 코드 수정 시 서버 자동 재시작
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
