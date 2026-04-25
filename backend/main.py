@@ -7,6 +7,7 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import os
+from datetime import datetime
 
 from data_process.load_data import CryptoDataFeed
 from services.chat_services import convert_df_to_chart_data
@@ -37,50 +38,66 @@ app.add_middleware(
 )
 
 # [2] 백그라운드 작업: 과거 데이터 대량 백필 (바이낸스 기준)
-def backfill_historical_data(symbol: str, timeframe: str, start_days: int):
-    print(f"\n[BACKGROUND] 데이터 전체 동기화 시작: 과거 {start_days}일치\n")
+def backfill_historical_data(symbol: str, timeframe: str, days: int):
+    print(f"\n[BACKGROUND 🛠️] {days}일치 과거 데이터 백필 시작")
     feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
-    feed.initialize_data(start_days=start_days)
-    print(f"\n[BACKGROUND] {symbol} ({timeframe}) 데이터 구축 및 지표 계산 완료\n")
+    # 🎯 역사적 데이터 수집 함수 호출
+    feed.sync_historical_data(start_days=days)
+    print(f"[BACKGROUND] {symbol} 백필 및 지표 재계산 완료")
 
 # [3] API: 과거 히스토리 조회 및 차트 데이터 반환
 @app.get("/api/history")
 async def get_history(
     background_tasks: BackgroundTasks,
-    symbol: str = Query("BTCUSDT"),  # 바이낸스 심볼 규격으로 변경
-    timeframe: str = Query("15m"),   # 15분봉 기본값
-    days: int = Query(365)            # 기본 요청 일수
+    symbol: str = Query("BTCUSDT"),
+    timeframe: str = Query("15m"),
+    days: int = Query(365)
 ):
     feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
+    fixed_limit = 5000 
     
-    # 1. DB에서 데이터 로드 (넉넉히 로드)
-    feed.load_latest_from_db(limit=5000)
+    # 1. 일단 DB 로드
+    feed.load_latest_from_db(limit=fixed_limit)
     
-    if feed.df.empty:
-        # 데이터가 아예 없으면 즉시 초기 구축 (이때는 기다려야 함)
-        print(f"[{symbol}] DB가 비어있어 초기 구축을 시작합니다. (약 10~20초 소요)")
-        feed.initialize_data(start_days=days)
-    else:
-        # 🎯 데이터는 있는데 지표(RSI 등)가 NULL인 경우 감지
-        if 'rsi' not in feed.df.columns or feed.df['rsi'].isnull().all():
-            print(f"[{timeframe}] 지표 누락 감지! 전체 재계산(refresh_indicators)을 시작합니다...")
-            feed.refresh_indicators()
-            feed.load_latest_from_db(limit=5000) # 재계산 후 다시 로드
-            
-        # 모자란 데이터가 있다면 백그라운드에서 조용히 수집 (UX 방해 X)
-        # 예: 현재 5일치만 있는데 30일치를 원할 경우
-        # (바이낸스는 빠르기 때문에 그냥 background task로 넘겨버립니다)
-        background_tasks.add_task(backfill_historical_data, symbol, timeframe, days)
+    # [동적 타임프레임 초 변환 로직]
+    # '1m' -> 60, '1h' -> 3600 처럼 초 단위로 변환합니다.
+    tf_map = {
+        "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
+        "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600, "8h": 28800, "12h": 43200,
+        "1d": 86400, "3d": 259200, "1w": 604800
+    }
+    
+    # 설정된 타임프레임에 맞는 초(sec)를 가져옵니다. (없으면 기본값 15분)
+    interval_seconds = tf_map.get(timeframe, 900)
+    
+    is_outdated = False
+    if not feed.df.empty:
+        last_time = feed.df.index[-1]
+        now = datetime.now(last_time.tzinfo or None)
+        
+        # 🎯 [핵심] 마지막 캔들이 현재 시간보다 '1캔들' 이상 차이나면 업데이트!
+        gap_seconds = (now - last_time).total_seconds()
+        
+        if gap_seconds > (interval_seconds + 10): 
+            is_outdated = True
+            print(f"[{symbol}] 시간 격차 감지: {gap_seconds}초 (기준: {interval_seconds}초)")
 
-    # 2. [핵심] 차트 렌더링용으로 데이터 정제 (시간 10자리 변환 및 최신 N개 슬라이싱)
-    # CryptoDataFeed에 추가하신 get_chart_df 메서드를 사용합니다.
-    chart_df = feed.get_chart_df()
-    
-    # 3. 전송용 JSON 데이터 변환
-    # 만약 convert_df_to_chart_data 함수가 내부적으로 포맷팅을 해준다면 그대로 사용합니다.
-    chart_json = convert_df_to_chart_data(chart_df)
-    
-    return chart_json
+    # 2. 데이터 부족 또는 오래된 데이터일 경우 API 호출
+    if feed.df.empty or len(feed.df) < fixed_limit or is_outdated:
+        print(f"[{symbol}] 데이터 동기화 필요 (이유: {'비어있음' if feed.df.empty else '오래됨' if is_outdated else '개수부족'})")
+        feed.sync_recent_data(required_limit=fixed_limit)
+        feed.load_latest_from_db(limit=fixed_limit)
+    else:
+        # 지표 누락 시 재계산
+        if 'rsi' not in feed.df.columns or feed.df['rsi'].isnull().all():
+            feed.refresh_indicators()
+            feed.load_latest_from_db(limit=fixed_limit)
+
+    # 3. 과거 백필(1년치 등)은 여전히 백그라운드에서 진행
+    background_tasks.add_task(backfill_historical_data, symbol, timeframe, days)
+
+    chart_df = feed.get_chart_df(limit=fixed_limit)
+    return convert_df_to_chart_data(chart_df)
 
 # [4] WebSocket: 실시간 데이터 동기화
 @app.websocket("/ws/chart")

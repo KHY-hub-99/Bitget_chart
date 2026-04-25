@@ -55,7 +55,7 @@ class CryptoDataFeed:
                         pass
             conn.commit()
             
-    def _fetch_binance_klines(self, start_time=None, limit=1500):
+    def _fetch_binance_klines(self, start_time=None, end_time=None, limit=1500):
         """바이낸스 선물 API에서 데이터를 직접 가져옵니다."""
         endpoint = "/fapi/v1/klines"
         params = {
@@ -65,6 +65,8 @@ class CryptoDataFeed:
         }
         if start_time:
             params["startTime"] = start_time
+        if end_time:
+            params["endTime"] = end_time # 🎯 역방향 수집을 위한 핵심 키
 
         try:
             response = requests.get(self.base_url + endpoint, params=params)
@@ -212,36 +214,65 @@ class CryptoDataFeed:
         self.save_enriched_df(self.df)
         print(f"[{self.symbol}] {len(self.df)}행의 지표가 DB에 성공적으로 반영되었습니다.")
             
-    def initialize_data(self, start_days=365):
+    def sync_recent_data(self, required_limit=5000):
         """
-        [최초 실행] 
-        과거 365일치를 끊김 없이 다 가져와서 DB를 꽉 채웁니다.
+        [프론트엔드용] 
+        현재 시간부터 역방향(과거)으로 필요한 캔들 수만큼만 즉시 수집합니다.
         """
-        print(f"[{self.symbol}] {start_days}일치 데이터 무제한 동기화 시작...")
-        
-        now_ms = int(time.time() * 1000)
-        since_ms = now_ms - (start_days * 24 * 60 * 60 * 1000)
+        print(f"[{self.symbol}] UI 렌더링용 최신 {required_limit}개 캔들 역방향 동기화...")
+        end_ts = int(time.time() * 1000)
         total_fetched = 0
         
-        # 바이낸스가 허용하는 과거 끝까지 루프 돌며 수집
-        while since_ms < now_ms:
-            klines = self._fetch_binance_klines(start_time=since_ms, limit=1500)
-            if not klines or len(klines) == 0:
-                break
-                
+        while total_fetched < required_limit:
+            # 역방향으로 1500개씩 호출
+            klines = self._fetch_binance_klines(end_time=end_ts, limit=1500)
+            if not klines: break
+            
             self._save_raw_ohlcv(klines)
             total_fetched += len(klines)
             
-            last_ts = klines[-1][0]
-            since_ms = last_ts + 1 # 다음 캔들부터
+            # 🎯 받아온 데이터 중 가장 오래된 캔들의 시간 - 1ms 를 다음 끝 시간으로 설정!
+            end_ts = klines[0][0] - 1
+            time.sleep(0.05)
             
-            print(f"동기화 중... {datetime.fromtimestamp(last_ts/1000)} 완료 (누적 {total_fetched}개)")
-            
-            if last_ts >= now_ms - 60000: break
-            time.sleep(0.05) # 바이낸스 속도에 맞춰 살짝 대기
-
-        # 수집 완료 후, 전체 데이터에 대해 지표 계산 한 번에 돌리기
+        # 최신 데이터만 빠르게 계산 완료
         self.refresh_indicators()
+        
+    def sync_historical_data(self, start_days=365):
+        """
+        [백그라운드용] 
+        DB에 저장된 가장 오래된 데이터부터 더 깊은 과거로 역방향 수집합니다.
+        """
+        # 1. DB에서 가장 오래된 시간 찾기
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(f'SELECT MIN(time) FROM "{self.symbol}" WHERE timeframe = ?', (self.timeframe,))
+            min_time = cursor.fetchone()[0]
+            
+        if not min_time:
+            end_ts = int(time.time() * 1000)
+        else:
+            end_ts = min_time - 1 # 기존 데이터 직전부터 수집 시작
+            
+        target_ms = int(time.time() * 1000) - (start_days * 24 * 60 * 60 * 1000)
+        total_fetched = 0
+        
+        print(f"[{self.symbol}] 백그라운드 과거 {start_days}일치 역방향 동기화 시작...")
+        
+        while end_ts > target_ms:
+            klines = self._fetch_binance_klines(end_time=end_ts, limit=1500)
+            if not klines: break
+            
+            self._save_raw_ohlcv(klines)
+            total_fetched += len(klines)
+            end_ts = klines[0][0] - 1
+            
+            print(f"과거 백필 중... {datetime.fromtimestamp(end_ts/1000)} 도달")
+            time.sleep(0.05)
+            
+        # 과거 데이터 다 모았으면 전체 지표 한 번 쫙 맞춰주기
+        if total_fetched > 0:
+            self.refresh_indicators()
             
     def update_data(self):
         """[Step 4] 실시간 업데이트 로직 (루프용)"""
