@@ -7,7 +7,7 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from data_process.load_data import CryptoDataFeed
 from services.chat_services import convert_df_to_chart_data
@@ -73,9 +73,12 @@ async def get_history(
     is_outdated = False
     if not feed.df.empty:
         last_time = feed.df.index[-1]
-        now = datetime.now(last_time.tzinfo or None)
+        now = datetime.now(timezone.utc)
         
         # 🎯 [핵심] 마지막 캔들이 현재 시간보다 '1캔들' 이상 차이나면 업데이트!
+        if last_time.tzinfo is None:
+            last_time = last_time.replace(tzinfo=timezone.utc)
+        
         gap_seconds = (now - last_time).total_seconds()
         
         if gap_seconds > (interval_seconds + 10): 
