@@ -55,12 +55,11 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
       if (!item || !item.time) return;
 
       if (!isCandle) {
-        // 🎯 [핵심 수정] 지표 값이 0이거나 NaN, undefined인 경우 차트 데이터에서 제외
-        // ETH 가격이 2000인데 지표가 0이면 차트가 일직선으로 보입니다.
+        // 0 이하(음수)를 허용하도록 수정
         if (
           item.value === null ||
           item.value === undefined ||
-          item.value <= 0
+          isNaN(item.value)
         ) {
           return;
         }
@@ -222,6 +221,7 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
 
       const formattedSymbol = symbolRef.current.replace("USDT", " / USDT");
 
+      // 🎯 [해결] 옵셔널 체이닝(?.)과 !== undefined를 통해 .value 참조 전 완벽한 방어벽 구축
       legendRef.current.innerHTML = `
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
           <span style="color: #fff; font-size: 14px; font-weight: 800; letter-spacing: -0.02em;">${formattedSymbol}</span>
@@ -233,14 +233,14 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
           <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">HIGH</span><span style="color: #e6e8ea; ${numStyle}">${f(candle.high)}</span></div>
           <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">LOW</span><span style="color: #e6e8ea; ${numStyle}">${f(candle.low)}</span></div>
           <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">CLOSE</span><span style="color: ${color}; font-weight: 700; ${numStyle}">${f(candle.close)}</span></div>
-          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">VOL</span><span style="color: #e6e8ea; ${numStyle}">${volV ? formatVol(volV.value) : "0.0"}</span></div>
+          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">VOL</span><span style="color: #e6e8ea; ${numStyle}">${volV?.value !== undefined ? formatVol(volV.value) : "0.0"}</span></div>
         </div>
 
         <div style="display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
-          ${settingsRef.current.kijun && kijunV ? `<div style="background: rgba(240, 185, 11, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #f0b90b; font-size: 9px; font-weight: 900;">KIJUN</span><span style="color: #f0b90b; font-size: 11px; font-weight: 500; ${numStyle}">${f(kijunV.value)}</span></div>` : ""}
-          ${settingsRef.current.bollinger && bbuV ? `<div style="background: rgba(33, 150, 243, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #2196f3; font-size: 9px; font-weight: 900;">BB</span><span style="color: #2196f3; font-size: 11px; font-weight: 500; ${numStyle}">${bbuV.value.toFixed(0)} - ${bblV.value.toFixed(0)}</span></div>` : ""}
-          ${settingsRef.current.rsi && rsiV ? `<div style="background: rgba(156, 39, 176, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #9c27b0; font-size: 9px; font-weight: 900;">RSI</span><span style="color: #9c27b0; font-size: 11px; font-weight: 500; ${numStyle}">${rsiV.value.toFixed(2)}</span></div>` : ""}
-          ${settingsRef.current.macd && macdV ? `<div style="background: rgba(41, 98, 255, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #2962FF; font-size: 9px; font-weight: 900;">MACD</span><span style="color: #2962FF; font-size: 11px; font-weight: 500; ${numStyle}">${macdV.value.toFixed(2)}</span></div>` : ""}
+          ${settingsRef.current.kijun && kijunV?.value !== undefined ? `<div style="background: rgba(240, 185, 11, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #f0b90b; font-size: 9px; font-weight: 900;">KIJUN</span><span style="color: #f0b90b; font-size: 11px; font-weight: 500; ${numStyle}">${f(kijunV.value)}</span></div>` : ""}
+          ${settingsRef.current.bollinger && bbuV?.value !== undefined && bblV?.value !== undefined ? `<div style="background: rgba(33, 150, 243, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #2196f3; font-size: 9px; font-weight: 900;">BB</span><span style="color: #2196f3; font-size: 11px; font-weight: 500; ${numStyle}">${bbuV.value.toFixed(0)} - ${bblV.value.toFixed(0)}</span></div>` : ""}
+          ${settingsRef.current.rsi && rsiV?.value !== undefined ? `<div style="background: rgba(156, 39, 176, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #9c27b0; font-size: 9px; font-weight: 900;">RSI</span><span style="color: #9c27b0; font-size: 11px; font-weight: 500; ${numStyle}">${rsiV.value.toFixed(2)}</span></div>` : ""}
+          ${settingsRef.current.macd && macdV?.value !== undefined ? `<div style="background: rgba(41, 98, 255, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #2962FF; font-size: 9px; font-weight: 900;">MACD</span><span style="color: #2962FF; font-size: 11px; font-weight: 500; ${numStyle}">${macdV.value.toFixed(2)}</span></div>` : ""}
         </div>
       `;
     });
