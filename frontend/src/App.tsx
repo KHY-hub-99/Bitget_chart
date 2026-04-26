@@ -6,7 +6,7 @@ import TradingChart from "./TradingChart";
 import { OrderPanel } from "./components/OrderPanel";
 import { PositionBoard } from "./components/PositionBoard";
 import { useSimulation } from "./hooks/useSimulation";
-import { Toast } from "./components/Toast"; // 🌟 추가
+import { Toast } from "./components/Toast";
 
 function App() {
   const [chartData, setChartData] = useState<any>(null);
@@ -20,6 +20,7 @@ function App() {
     message: string;
     type: "success" | "error" | "info";
   } | null>(null);
+
   const showToast = useCallback(
     (message: string, type: "success" | "error" | "info" = "info") => {
       setToast({ message, type });
@@ -34,6 +35,8 @@ function App() {
   const [inputSymbol, setInputSymbol] = useState<string>("BTCUSDT");
   const [inputTimeframe, setInputTimeframe] = useState<string>("15m");
 
+  // 🎯 [수정] activePositions(배열)를 가져옵니다.
+  // 기존 currentPosition도 호환성을 위해 유지할 수 있습니다.
   const {
     status,
     loading,
@@ -42,7 +45,7 @@ function App() {
     checkTick,
     resetSimulation,
     changePositionMode,
-    currentPosition,
+    activePositions, // 복수 포지션 배열
   } = useSimulation(symbol);
 
   // 🌟 무한 새로고침 방지를 위한 Ref 패턴
@@ -146,11 +149,9 @@ function App() {
     setTimeframe(inputTimeframe);
   };
 
-  // 🌟 모드 변경 핸들러 (Toast 연동)
   const handleModeChange = async (mode: "ONE_WAY" | "HEDGE") => {
     try {
       await changePositionMode(mode);
-      // 성공 시에는 별도 알림 없이 UI만 바뀌도록 기획됨
     } catch (err: any) {
       const msg = err.response?.data?.detail || "모드 변경에 실패했습니다.";
       showToast(msg, "error");
@@ -159,7 +160,6 @@ function App() {
 
   return (
     <div className="app-container" style={appContainerStyle}>
-      {/* 🌟 Toast 렌더링 */}
       {toast && (
         <Toast
           message={toast.message}
@@ -192,6 +192,7 @@ function App() {
         </div>
       </header>
 
+      {/* 툴바 및 레이어 설정 (생략 가능) */}
       <div style={toolbarStyle}>
         <div style={filterGroupStyle}>
           <span style={labelStyle}>Market:</span>
@@ -248,12 +249,13 @@ function App() {
               className="chart-section"
               style={{ flex: 2, minHeight: "450px" }}
             >
+              {/* 🎯 [수정] TradingChart에 activePositions 전달 */}
               <TradingChart
                 key={`${symbol}-${timeframe}`}
                 data={chartData}
                 settings={visibleLayers}
                 symbol={symbol}
-                currentPosition={currentPosition}
+                activePositions={activePositions}
               />
             </div>
 
@@ -271,15 +273,15 @@ function App() {
               </div>
 
               <div className="order-section" style={{ flex: 1 }}>
+                {/* 🎯 [수정] OrderPanel에 activePositions(배열) 전달 */}
                 <OrderPanel
                   currentPrice={currentPrice}
                   placeMarketOrder={placeMarketOrder}
                   resetSimulation={resetSimulation}
-                  // 🌟 수정: 직접 changePositionMode 대신 handleModeChange 사용
                   changePositionMode={handleModeChange}
                   positionMode={status?.position_mode ?? "ONE_WAY"}
                   loading={loading}
-                  currentPosition={currentPosition}
+                  activePositions={activePositions}
                   availableBalance={status?.available_balance ?? 0}
                 />
               </div>
@@ -291,7 +293,7 @@ function App() {
   );
 }
 
-// --- 스타일 객체 (기존 유지) ---
+// 스타일 객체는 기존 코드와 동일하여 유지...
 const appContainerStyle: React.CSSProperties = {
   width: "100vw",
   height: "100vh",

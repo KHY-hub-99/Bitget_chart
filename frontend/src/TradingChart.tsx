@@ -29,19 +29,14 @@ interface ChartDataProps {
     macd: boolean;
   };
   symbol: string;
-  // 🎯 [추가] 현재 포지션 정보 (App.tsx에서 전달)
-  currentPosition?: {
-    side: "LONG" | "SHORT";
-    entry_price: number;
-    liquidation_price: number;
-  } | null;
+  activePositions?: any[];
 }
 
 const TradingChart: React.FC<ChartDataProps> = ({
   data,
   settings,
   symbol,
-  currentPosition,
+  activePositions,
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
@@ -49,7 +44,7 @@ const TradingChart: React.FC<ChartDataProps> = ({
   const seriesRefs = useRef<{ [key: string]: any }>({});
 
   // 🎯 [추가] 생성된 프라이스 라인들을 저장해둘 참조 객체 (지울 때 필요함)
-  const priceLinesRef = useRef<{ entry?: IPriceLine; liq?: IPriceLine }>({});
+  const priceLinesRef = useRef<IPriceLine[]>([]);
 
   const settingsRef = useRef(settings);
   const symbolRef = useRef(symbol);
@@ -331,43 +326,48 @@ const TradingChart: React.FC<ChartDataProps> = ({
     const s = seriesRefs.current;
     if (!s || !s.candle) return;
 
-    // 1. 기존에 그려진 라인이 있다면 삭제 (초기화)
-    if (priceLinesRef.current.entry) {
-      s.candle.removePriceLine(priceLinesRef.current.entry);
-      delete priceLinesRef.current.entry;
-    }
-    if (priceLinesRef.current.liq) {
-      s.candle.removePriceLine(priceLinesRef.current.liq);
-      delete priceLinesRef.current.liq;
-    }
+    // 1. 기존에 그려진 모든 라인을 안전하게 삭제
+    priceLinesRef.current.forEach((line) => {
+      s.candle.removePriceLine(line);
+    });
+    priceLinesRef.current = []; // 배열 초기화
 
-    // 2. 현재 포지션이 존재하면 새로운 라인 추가
-    if (currentPosition && currentPosition.entry_price > 0) {
-      const isLong = currentPosition.side === "LONG";
+    // 2. activePositions 배열을 순회하며 라인 생성
+    if (activePositions && activePositions.length > 0) {
+      activePositions.forEach((pos) => {
+        if (pos.entry_price <= 0) return;
 
-      // 진입가 선 (Long은 녹색, Short은 붉은색)
-      priceLinesRef.current.entry = s.candle.createPriceLine({
-        price: currentPosition.entry_price,
-        color: isLong ? "#2ebd85" : "#f6465d",
-        lineWidth: 2,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: `${currentPosition.side} ENTRY`, // 우측 Y축에 라벨 표시
-      });
+        const isLong = pos.side === "LONG";
+        const sideColor = isLong ? "#2ebd85" : "#f6465d";
 
-      // 강제청산가 선 (주황색/노란색으로 경고 표시)
-      if (currentPosition.liquidation_price > 0) {
-        priceLinesRef.current.liq = s.candle.createPriceLine({
-          price: currentPosition.liquidation_price,
-          color: "#ff9800", // 주황색
+        // 진입가 선 생성 [cite: 1621]
+        const entryLine = s.candle.createPriceLine({
+          price: pos.entry_price,
+          color: sideColor,
           lineWidth: 2,
-          lineStyle: LineStyle.Solid,
+          lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: "LIQUIDATION",
+          title: `${pos.side} ENTRY (${pos.leverage}x)`,
         });
-      }
+
+        // 강제청산가 선 생성
+        let liqLine = null;
+        if (pos.liquidation_price > 0) {
+          liqLine = s.candle.createPriceLine({
+            price: pos.liquidation_price,
+            color: "#ff9800",
+            lineWidth: 2,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            title: `${pos.side} LIQ`,
+          });
+        }
+        // 관리 목록에 추가
+        priceLinesRef.current.push(entryLine);
+        if (liqLine) priceLinesRef.current.push(liqLine);
+      });
     }
-  }, [currentPosition]); // currentPosition이 바뀔 때마다 실행
+  }, [activePositions]); // currentPosition이 바뀔 때마다 실행
 
   return (
     <div
