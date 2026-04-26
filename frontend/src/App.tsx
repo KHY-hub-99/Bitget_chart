@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchChartData, subscribeChartData } from "./api";
 import TradingChart from "./TradingChart";
 
-// 🆕 새로 만든 시뮬레이션 컴포넌트 임포트
+// 🆕 시뮬레이션 컴포넌트 임포트
 import { OrderPanel } from "./components/OrderPanel";
 import { PositionBoard } from "./components/PositionBoard";
 
@@ -12,7 +12,7 @@ function App() {
   const [isLive, setIsLive] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // 🆕 현재 시장가(Current Price)를 추적하는 상태 (주문 패널과 포지션 현황판에 전달)
+  // 현재 시장가(Current Price) 상태
   const [currentPrice, setCurrentPrice] = useState<number>(0);
 
   const [symbol, setSymbol] = useState<string>("BTCUSDT");
@@ -35,7 +35,7 @@ function App() {
     setVisibleLayers((prev) => ({ ...prev, [layer]: !prev[layer] }));
   };
 
-  // 1️⃣ 기존 데이터 로딩 및 웹소켓 훅 유지
+  // 1️⃣ 데이터 로딩 및 웹소켓 연결
   useEffect(() => {
     let ws: WebSocket | null = null;
     let isActive = true;
@@ -58,15 +58,8 @@ function App() {
           setChartData((prev: any) => {
             if (!newData || !newData.candles || newData.candles.length === 0)
               return prev;
-
-            if (!prev || prev.symbol !== symbol || newData.symbol !== symbol) {
+            if (!prev || prev.symbol !== symbol || newData.symbol !== symbol)
               return { ...newData, symbol };
-            }
-
-            const lastPrice = newData.candles[newData.candles.length - 1].close;
-            if (symbol === "ETHUSDT" && lastPrice > 10000) {
-              return prev;
-            }
 
             const candleMap = new Map();
             prev.candles.forEach((c: any) => candleMap.set(c.time, c));
@@ -90,29 +83,16 @@ function App() {
               );
             });
 
-            const markerMap = new Map();
-            prev.markers?.forEach((m: any) =>
-              markerMap.set(`${m.time}-${m.text}`, m),
-            );
-            newData.markers?.forEach((m: any) =>
-              markerMap.set(`${m.time}-${m.text}`, m),
-            );
-            const mergedMarkers = Array.from(markerMap.values()).sort(
-              (a, b) => a.time - b.time,
-            );
-
             return {
               ...prev,
               candles: mergedCandles,
               indicators: mergedIndicators,
-              markers: mergedMarkers,
             };
           });
         });
       })
       .catch((err) => {
         if (!isActive) return;
-        console.error(err);
         setError("데이터 로드 실패. 서버 상태를 확인하세요.");
         setIsLoading(false);
       });
@@ -123,7 +103,7 @@ function App() {
     };
   }, [symbol, timeframe, days]);
 
-  // 2️⃣ 🆕 ChartData가 갱신될 때마다 가장 마지막 캔들의 종가를 currentPrice로 설정!
+  // 2️⃣ 실시간 가격 추출
   useEffect(() => {
     if (chartData && chartData.candles && chartData.candles.length > 0) {
       const lastCandle = chartData.candles[chartData.candles.length - 1];
@@ -131,7 +111,7 @@ function App() {
     }
   }, [chartData]);
 
-  // --- 스타일 정의 ---
+  // UI 스타일 (기존 유지)
   const selectStyle = {
     backgroundColor: "#1e222d",
     color: "#d1d4dc",
@@ -183,17 +163,17 @@ function App() {
 
   return (
     <div
+      className="app-container"
       style={{
         width: "100vw",
         height: "100vh",
         backgroundColor: "#0b0e14",
         display: "flex",
         flexDirection: "column",
-        fontFamily: "Inter, sans-serif",
         overflow: "hidden",
       }}
     >
-      {/* --- 기존 헤더 유지 --- */}
+      {/* --- 헤더 & 툴바 --- */}
       <header
         style={{
           height: "60px",
@@ -240,7 +220,6 @@ function App() {
         </div>
       </header>
 
-      {/* --- 기존 툴바 유지 --- */}
       <div
         style={{
           padding: "12px 24px",
@@ -264,9 +243,7 @@ function App() {
           </select>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>
-            Timeframe:
-          </span>
+          <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>Time:</span>
           <select
             style={selectStyle}
             value={inputTimeframe}
@@ -280,24 +257,12 @@ function App() {
             <option value="1d">1d</option>
           </select>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>
-            History (Days):
-          </span>
-          <input
-            type="number"
-            min="1"
-            style={inputStyle}
-            value={inputDays}
-            onChange={(e) => setInputDays(Number(e.target.value))}
-            onKeyDown={(e) => e.key === "Enter" && handleApplySettings()}
-          />
-        </div>
         <button style={btnStyle} onClick={handleApplySettings}>
           적용
         </button>
       </div>
 
+      {/* --- 레이어 토글 --- */}
       <div
         style={{
           padding: "8px 24px",
@@ -305,7 +270,6 @@ function App() {
           borderBottom: "1px solid #2a2e39",
           display: "flex",
           gap: "10px",
-          flexWrap: "wrap",
           flexShrink: 0,
         }}
       >
@@ -315,53 +279,32 @@ function App() {
               type="checkbox"
               checked={isVisible}
               onChange={() => toggleLayer(key as any)}
-              style={{ accentColor: "#2962FF" }}
-            />
+            />{" "}
             {key.toUpperCase()}
           </label>
         ))}
       </div>
 
-      {/* --- 🌟 메인 레이아웃 구역 (차트 + 하단 패널 분할) --- */}
+      {/* --- 🌟 수정된 메인 레이아웃 --- */}
       <main
+        className="app-main"
         style={{
           flex: 1,
-          padding: "10px",
           display: "flex",
-          flexDirection: "column", // 세로 분할 (위: 차트, 아래: 패널)
-          gap: "10px",
-          minHeight: 0, // Flex 자식이 넘칠 때 찌그러짐 방지
+          flexDirection: "column",
+          overflow: "hidden",
         }}
       >
         {error ? (
-          <div
-            style={{
-              backgroundColor: "#1e222d",
-              padding: "30px",
-              borderRadius: "12px",
-              border: "1px solid #ef5350",
-              textAlign: "center",
-              margin: "auto",
-            }}
-          >
-            <h3 style={{ color: "#ef5350" }}>Connection Failed</h3>
-            <p style={{ color: "#a3a6af" }}>{error}</p>
+          <div style={{ margin: "auto", textAlign: "center" }}>
+            <h3 style={{ color: "#ef5350" }}>{error}</h3>
           </div>
         ) : isLoading || !chartData ? (
           <div style={{ margin: "auto", color: "#d1d4dc" }}>LOADING...</div>
         ) : (
           <>
-            {/* 📈 1. 상단: 차트 영역 (남은 공간의 비율을 크게 차지하도록 flex: 1 설정) */}
-            <div
-              style={{
-                flex: 1, // 남은 세로 공간 다 차지
-                minHeight: "40%", // 최소 높이 보장
-                backgroundColor: "#131722",
-                borderRadius: "12px",
-                border: "1px solid #2a2e39",
-                overflow: "hidden", // 차트가 삐져나가지 않게
-              }}
-            >
+            {/* 📈 상단: 차트 섹션 (CSS 클래스 적용으로 Volume 공간 확보) */}
+            <div className="chart-section">
               <TradingChart
                 key={`${symbol}-${timeframe}`}
                 data={chartData}
@@ -370,39 +313,12 @@ function App() {
               />
             </div>
 
-            {/* 🎮 2. 하단: 패널 영역 (고정 높이 부여) */}
-            <div
-              style={{
-                display: "flex", // 가로 분할 (좌: 포지션, 우: 주문)
-                height: "320px", // 하단 패널 고정 높이
-                flexShrink: 0,
-                gap: "10px",
-              }}
-            >
-              {/* 좌측: 포지션 현황판 (나머지 가로 공간 모두 차지) */}
-              <div
-                style={{
-                  flex: 1,
-                  backgroundColor: "#131722",
-                  borderRadius: "12px",
-                  border: "1px solid #2a2e39",
-                  overflow: "hidden",
-                }}
-              >
+            {/* 🎮 하단: 패널 섹션 (잘림 방지 고정 레이아웃) */}
+            <div className="bottom-section">
+              <div className="position-section">
                 <PositionBoard currentPrice={currentPrice} />
               </div>
-
-              {/* 우측: 주문 패널 (너비 320px 고정) */}
-              <div
-                style={{
-                  width: "320px",
-                  minWidth: "320px",
-                  backgroundColor: "#131722",
-                  borderRadius: "12px",
-                  border: "1px solid #2a2e39",
-                  overflow: "hidden",
-                }}
-              >
+              <div className="order-section">
                 <OrderPanel currentPrice={currentPrice} />
               </div>
             </div>

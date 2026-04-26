@@ -1,7 +1,6 @@
-/* 폰트 불러오기 (Google Fonts) */
+/* 폰트 및 기본 초기화 (기존 동일) */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap");
 
-/* 기본 초기화 */
 * {
   margin: 0;
   padding: 0;
@@ -13,81 +12,108 @@ body,
 #root {
   width: 100%;
   height: 100%;
-  background-color: #0b0e11; /* 차트 배경과 통일 */
+  background-color: #0b0e11;
   color: #d1d4dc;
-  overflow: hidden; /* 대시보드이므로 전체 스크롤 방지 */
+  overflow: hidden;
 }
 
 body {
   font-family:
     "Inter",
     -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
     sans-serif;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
-/* 숫자가 변할 때 흔들림 방지 클래스 (가격 및 PNL 표기에 사용) */
 .tabular-nums {
   font-family: "IBM Plex Mono", monospace;
   font-variant-numeric: tabular-nums;
 }
 
-/* ========================================
-   스크롤바 디자인 (다크 테마용)
-   ======================================== */
+/* 스크롤바 디자인 (기존 동일) */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
   background: #131722;
 }
-
 ::-webkit-scrollbar-thumb {
   background: #2a2e39;
   border-radius: 3px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
   background: #363c4e;
 }
 
-/* ========================================
-   UI 요소(Input, Select, Button) 초기화 및 최적화
-   ======================================== */
+/* UI 요소 최적화 (기존 동일) */
 select,
 button,
 input {
   font-family: inherit;
 }
-
-/* 🌟 [추가] 브라우저 자동완성 시 배경색이 하얗게 변하는 현상 방지 */
-input:-webkit-autofill,
-input:-webkit-autofill:hover,
-input:-webkit-autofill:focus,
-input:-webkit-autofill:active {
+input:-webkit-autofill {
   -webkit-box-shadow: 0 0 0 30px #1e222d inset !important;
   -webkit-text-fill-color: #d1d4dc !important;
 }
-
-/* 🌟 [추가] 숫자 입력창(number)의 기본 상하 화살표(스핀 버튼) 제거 */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
-
 input[type="number"] {
-  -moz-appearance: textfield; /* Firefox 지원 */
+  -moz-appearance: textfield;
+}
+input[type="range"] {
+  accent-color: #2962ff;
+  cursor: pointer;
 }
 
-/* 🌟 [추가] 레버리지 슬라이더 테마 색상 동기화 */
-input[type="range"] {
-  accent-color: #2962ff; /* 메인 파란색 포인트 컬러 */
-  cursor: pointer;
+/* ========================================
+   🚀 레이아웃 수정 (잘림 방지 핵심)
+   ======================================== */
+
+/* 1. App.tsx의 main 태그에 적용될 스타일 */
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* 전체 스크롤 방지 */
+}
+
+/* 2. 상단 차트 영역: 거래량이 보일 공간을 강제로 확보 */
+.chart-section {
+  flex: 1;
+  position: relative;
+  min-height: 400px; /* 🌟 매우 중요: 차트와 거래량이 뭉개지지 않는 최소 높이 */
+  background-color: #131722;
+}
+
+/* 3. 하단 전체 섹션 */
+.bottom-section {
+  display: flex;
+  flex-direction: row;
+  height: 35vh; /* 화면의 35%만 차지하게 조정 (기존 40%는 너무 큼) */
+  min-height: 380px; /* 주문 패널이 다 보일 정도의 최소 높이 */
+  background-color: #1e2026;
+  border-top: 1px solid #2b3139;
+  flex-shrink: 0; /* 🌟 상단 차트에 의해 하단이 찌그러지지 않게 방지 */
+}
+
+/* 4. 하단 좌측: 포지션 현황 */
+.position-section {
+  flex: 1;
+  overflow-y: auto; /* 내용 많으면 내부 스크롤 */
+  min-width: 0; /* flex 자식의 최소 너비 버그 방지 */
+}
+
+/* 5. 하단 우측: 주문 패널 */
+.order-section {
+  width: 340px;
+  min-width: 340px;
+  border-left: 1px solid #2b3139;
+  display: flex;
+  flex-direction: column;
+  background-color: #131722;
+  overflow-y: auto; /* 내용 잘리면 내부 스크롤 */
 }
