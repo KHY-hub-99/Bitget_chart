@@ -46,6 +46,24 @@ class TickRequest(BaseModel):
 class ModeRequest(BaseModel):
     mode: PositionMode
 
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message)
+            except:
+                pass
+
 # --- [2. 백그라운드 데이터 작업 로직] ---
 def preload_initial_market_data():
     # 사용자가 요청한 심볼과 타임프레임 설정
@@ -133,9 +151,12 @@ def serialize_wallet(wallet: Wallet):
 
 # --- [시뮬레이션 백그라운드 실행 함수] ---
 # BUG FIX: 중복 except 블록 제거 → 단일 except로 통합, traceback 로깅 포함
+manager = ConnectionManager()
 def run_full_optimization_task(symbol: str, timeframe: str, loop: asyncio.AbstractEventLoop):
     def socket_logger(msg):
-        loop.call_soon_threadsafe(simulation_log_queue.put_nowait, msg)
+        loop.call_soon_threadsafe(
+            lambda: asyncio.create_task(manager.broadcast(msg))
+        )
 
     try:
         socket_logger(f"[{symbol} | {timeframe}] 전체 데이터 시뮬레이션 시작...")
@@ -459,15 +480,14 @@ async def trigger_full_simulation(
 
 @app.websocket("/ws/simulation/logs")
 async def websocket_simulation_logs(websocket: WebSocket):
-    await websocket.accept()
+    await manager.connect(websocket)
     try:
         while True:
-            message = await simulation_log_queue.get()
-            await websocket.send_text(message)
+            # 클라이언트로부터의 메시지를 대기하며 연결 유지 (Ping-Pong 효과)
+            await websocket.receive_text()
     except WebSocketDisconnect:
+        manager.disconnect(websocket)
         print("[WS ⚪] 시뮬레이션 로그 소켓 연결 종료")
-    except Exception as e:
-        print(f"[WS 🔴] 로그 전송 에러: {e}")
 
 # --- [8. 차트 시각화 전용 Replay API] ---
 @app.get("/api/simulation/replay")
