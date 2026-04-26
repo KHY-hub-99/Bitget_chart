@@ -48,39 +48,36 @@ class ModeRequest(BaseModel):
 
 # --- [2. 백그라운드 데이터 작업 로직] ---
 def preload_initial_market_data():
+    # 사용자가 요청한 심볼과 타임프레임 설정
     symbols = ["BTCUSDT", "ETHUSDT"]
-    timeframes = ["1m", "5m", "15m", "1h"]
-    tf_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
+    timeframes = ["15m", "1h", "4h", "1d", "1w"]
+    
+    print("\n" + "="*60)
+    print("[STARTUP] 지정된 5개 타임프레임의 365일 데이터 동기화 시작...")
+    print("="*60)
 
-    print("\n[STARTUP] 스마트 동기화 시작...")
     for sym in symbols:
         for tf in timeframes:
-            feed = CryptoDataFeed(symbol=sym, timeframe=tf)
-            feed.load_latest_from_db(limit=100)
-
-            is_outdated = False
-            if not feed.df.empty:
-                last_time = feed.df.index[-1]
-                now = datetime.now(timezone.utc)
-                if last_time.tzinfo is None:
-                    last_time = last_time.replace(tzinfo=timezone.utc)
-                gap = (now - last_time).total_seconds()
-                if gap > (tf_map.get(tf, 900) + 10):
-                    is_outdated = True
-
-            if feed.df.empty or is_outdated:
-                print(f"[STARTUP] {sym} ({tf}) 데이터 업데이트 필요 -> 스마트 동기화 실행")
-                feed.sync_recent_data()
-            else:
-                print(f"[STARTUP] {sym} ({tf}) 최신 상태 유지 중 -> 지표만 갱신")
+            try:
+                print(f"[STARTUP] {sym} ({tf}) 365일치 데이터 수집 중...")
+                feed = CryptoDataFeed(symbol=sym, timeframe=tf)
+                
+                # sync_historical_data를 사용하여 365일치를 강제로 백필합니다.
+                feed.sync_historical_data(start_days=365)
+                
+                # 지표 재계산 (RSI, 일목균형표 등)
                 feed.refresh_indicators()
+                
+                # API 부하 방지를 위해 짧은 휴식
+                time.sleep(1) 
+            except Exception as e:
+                print(f"[STARTUP ERROR] {sym} ({tf}) 데이터 수집 실패: {e}")
 
-            time.sleep(0.5)
-    print("[STARTUP] 모든 데이터가 최신 상태로 준비되었습니다.\n")
+    print("\n[STARTUP] 모든 기초 데이터 준비 완료\n")
 
 async def continuous_data_sync_worker():
     symbols = ["BTCUSDT", "ETHUSDT"]
-    timeframes = ["1m", "5m", "15m", "1h"]
+    timeframes = ["15m", "1h", "4h", "1d", "1w"]
 
     await asyncio.sleep(30)
     print("\n" + "="*50)

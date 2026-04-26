@@ -122,17 +122,20 @@ const SimulationResultsPage: React.FC = () => {
               <option value="ALL" style={optionStyle}>
                 전체 시간
               </option>
-              <option value="1m" style={optionStyle}>
-                1m
-              </option>
-              <option value="5m" style={optionStyle}>
-                5m
-              </option>
               <option value="15m" style={optionStyle}>
                 15m
               </option>
               <option value="1h" style={optionStyle}>
                 1h
+              </option>
+              <option value="4h" style={optionStyle}>
+                4h
+              </option>
+              <option value="1d" style={optionStyle}>
+                1d
+              </option>
+              <option value="1w" style={optionStyle}>
+                1w
               </option>
             </select>
           </div>
