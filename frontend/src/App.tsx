@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react"; // 🌟 useRef 추가
+import { useEffect, useState, useRef, useCallback } from "react";
 import { fetchChartData, subscribeChartData } from "./api";
 import TradingChart from "./TradingChart";
 
@@ -6,14 +6,26 @@ import TradingChart from "./TradingChart";
 import { OrderPanel } from "./components/OrderPanel";
 import { PositionBoard } from "./components/PositionBoard";
 import { useSimulation } from "./hooks/useSimulation";
+import { Toast } from "./components/Toast"; // 🌟 추가
 
 function App() {
   const [chartData, setChartData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-
   const [currentPrice, setCurrentPrice] = useState<number>(0);
+
+  // 🌟 Toast 상태 관리
+  const [toast, setToast] = useState<{
+    message: string;
+    type: "success" | "error" | "info";
+  } | null>(null);
+  const showToast = useCallback(
+    (message: string, type: "success" | "error" | "info" = "info") => {
+      setToast({ message, type });
+    },
+    [],
+  );
 
   const [symbol, setSymbol] = useState<string>("BTCUSDT");
   const [timeframe, setTimeframe] = useState<string>("15m");
@@ -22,7 +34,6 @@ function App() {
   const [inputSymbol, setInputSymbol] = useState<string>("BTCUSDT");
   const [inputTimeframe, setInputTimeframe] = useState<string>("15m");
 
-  // 🌟 구조 분해 할당으로 변수들을 가져옵니다.
   const {
     status,
     loading,
@@ -34,8 +45,7 @@ function App() {
     currentPosition,
   } = useSimulation(symbol);
 
-  // 🌟 [무한 새로고켓 해결 핵심]
-  // 최신 checkTick 함수를 담아둘 Ref입니다. 웹소켓 재연결 없이 최신 함수만 갈아끼웁니다.
+  // 🌟 무한 새로고침 방지를 위한 Ref 패턴
   const checkTickRef = useRef(checkTick);
   useEffect(() => {
     checkTickRef.current = checkTick;
@@ -78,9 +88,6 @@ function App() {
             const lastPrice = lastCandle.close;
 
             setCurrentPrice(lastPrice);
-
-            // 🌟 [수정] sim.checkTick 대신 Ref를 통해 최신 함수 호출
-            // 이렇게 하면 useEffect가 재실행(웹소켓 재연결)되지 않습니다.
             if (checkTickRef.current) {
               checkTickRef.current(lastPrice);
             }
@@ -124,7 +131,7 @@ function App() {
       })
       .catch((err) => {
         if (!isActive) return;
-        setError("데이터 로드 실패. 서버 상태를 확인하세요.");
+        setError("데이터 로드 실패.");
         setIsLoading(false);
       });
 
@@ -132,7 +139,6 @@ function App() {
       isActive = false;
       if (ws) ws.close();
     };
-    // 🌟 [중요] 의존성 배열에서 checkTick을 제거하여 무한 새로고침 방지
   }, [symbol, timeframe, days]);
 
   const handleApplySettings = () => {
@@ -140,8 +146,28 @@ function App() {
     setTimeframe(inputTimeframe);
   };
 
+  // 🌟 모드 변경 핸들러 (Toast 연동)
+  const handleModeChange = async (mode: "ONE_WAY" | "HEDGE") => {
+    try {
+      await changePositionMode(mode);
+      // 성공 시에는 별도 알림 없이 UI만 바뀌도록 기획됨
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || "모드 변경에 실패했습니다.";
+      showToast(msg, "error");
+    }
+  };
+
   return (
     <div className="app-container" style={appContainerStyle}>
+      {/* 🌟 Toast 렌더링 */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
       <header style={headerStyle}>
         <h1 style={logoStyle}>
           Crypto Trading <span style={{ color: "#2962FF" }}>Master</span>
@@ -161,7 +187,7 @@ function App() {
               fontWeight: 600,
             }}
           >
-            {isLive ? "LIVE CONNECTED" : "OFFLINE"}
+            {isLive ? "LIVE" : "OFFLINE"}
           </span>
         </div>
       </header>
@@ -189,7 +215,6 @@ function App() {
             <option value="5m">5m</option>
             <option value="15m">15m</option>
             <option value="1h">1h</option>
-            <option value="1d">1d</option>
           </select>
         </div>
         <button style={btnStyle} onClick={handleApplySettings}>
@@ -250,7 +275,8 @@ function App() {
                   currentPrice={currentPrice}
                   placeMarketOrder={placeMarketOrder}
                   resetSimulation={resetSimulation}
-                  changePositionMode={changePositionMode}
+                  // 🌟 수정: 직접 changePositionMode 대신 handleModeChange 사용
+                  changePositionMode={handleModeChange}
                   positionMode={status?.position_mode ?? "ONE_WAY"}
                   loading={loading}
                   currentPosition={currentPosition}
@@ -265,7 +291,7 @@ function App() {
   );
 }
 
-// --- 스타일 객체 (가독성을 위해 하단 배치) ---
+// --- 스타일 객체 (기존 유지) ---
 const appContainerStyle: React.CSSProperties = {
   width: "100vw",
   height: "100vh",

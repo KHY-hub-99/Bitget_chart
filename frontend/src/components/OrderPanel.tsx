@@ -77,6 +77,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
           onClick={() => changePositionMode("ONE_WAY")}
           style={{
             ...styles.modeBtn,
+            // 현재 모드가 ONE_WAY면 노란색(#fcd535), 아니면 회색
             color: positionMode === "ONE_WAY" ? "#fcd535" : "#848e9c",
             borderBottom:
               positionMode === "ONE_WAY" ? "2px solid #fcd535" : "none",
@@ -88,6 +89,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
           onClick={() => changePositionMode("HEDGE")}
           style={{
             ...styles.modeBtn,
+            // 현재 모드가 HEDGE면 노란색(#fcd535), 아니면 회색
             color: positionMode === "HEDGE" ? "#fcd535" : "#848e9c",
             borderBottom:
               positionMode === "HEDGE" ? "2px solid #fcd535" : "none",
@@ -190,6 +192,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
             cursor: loading ? "not-allowed" : "pointer",
           }}
         >
+          {/* ✅ 모드에 따라 텍스트 변경 */}
           {loading
             ? "..."
             : positionMode === "HEDGE"
@@ -206,6 +209,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
             cursor: loading ? "not-allowed" : "pointer",
           }}
         >
+          {/* ✅ 모드에 따라 텍스트 변경 */}
           {loading
             ? "..."
             : positionMode === "HEDGE"
@@ -224,7 +228,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
                 marginBottom: "15px",
               }}
             >
-              Confirm {side} Order ({positionMode})
+              Confirm {side} Order ({positionMode}) {/* ✅ 제목에 모드 표시 */}
             </h3>
             <div style={styles.confirmRow}>
               <span>Symbol:</span> <strong>BTCUSDT</strong>

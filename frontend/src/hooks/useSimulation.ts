@@ -94,19 +94,28 @@ export const useSimulation = (symbol: string) => {
 
   // 6. 포지션 모드 변경
   const changePositionMode = async (mode: "ONE_WAY" | "HEDGE") => {
+    if (status && Object.keys(status.positions).length > 0) {
+      throw new Error("활성화된 포지션이 있을 때는 모드를 변경할 수 없습니다.");
+    }
+
+    // 1. 화면 먼저 변경 (낙관적 업데이트)
+    if (status) {
+      setStatus({ ...status, position_mode: mode });
+    }
+
     try {
-      // 포지션이 있으면 백엔드에서 에러를 뱉으므로 프론트에서 먼저 체크하면 좋습니다.
-      if (status && Object.keys(status.positions).length > 0) {
-        alert("활성화된 포지션이 있을 때는 모드를 변경할 수 없습니다.");
-        return;
+      // 2. 서버에 요청을 보내고 "완료될 때까지" 기다립니다.
+      const response = await simulationApi.setMode(mode);
+
+      // 3. 서버가 준 진짜 결과값으로 한 번 더 확인 사살
+      // response.mode가 "HEDGE"라면 확실히 바뀐 것입니다.
+      if (response && response.mode) {
+        await refreshStatus();
       }
-      await simulationApi.setMode(mode);
-      await refreshStatus();
-      alert(
-        `포지션 모드가 ${mode === "ONE_WAY" ? "단방향" : "양방향"}으로 변경되었습니다.`,
-      );
     } catch (error: any) {
-      alert(error.response?.data?.detail || "모드 변경 실패");
+      // 에러 발생 시(서버에서 거절됨) 다시 원래 서버 상태로 롤백
+      await refreshStatus();
+      throw error;
     }
   };
 

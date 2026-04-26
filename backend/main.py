@@ -136,6 +136,7 @@ def serialize_wallet(wallet: Wallet):
         "total_balance": float(wallet.total_balance),
         "available_balance": float(wallet.available_balance),
         "frozen_margin": float(wallet.frozen_margin),
+        "position_mode": wallet.position_mode.value,
         "positions": {
             sym: {
                 "side": p.side,
@@ -231,11 +232,10 @@ async def process_price_tick(req: TickRequest):
     
 @app.post("/api/simulation/mode")
 async def set_position_mode(req: ModeRequest):
-    # 포지션이 있을 때 모드를 바꾸면 계산이 꼬이므로 체크 (실제 거래소와 동일 로직)
     if sim_wallet.positions:
-        raise HTTPException(status_code=400, detail="활성화된 포지션이 있을 때는 모드를 변경할 수 없습니다.")
-    
+        raise HTTPException(status_code=400, detail="보유 중인 포지션이 있어 모드를 변경할 수 없습니다.")
     sim_wallet.position_mode = req.mode
+    print(f"Mode changed to: {sim_wallet.position_mode}")
     return {"message": f"모드가 {req.mode}로 변경되었습니다.", "mode": req.mode}
 
 @app.post("/api/simulation/reset")
