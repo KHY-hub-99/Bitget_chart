@@ -4,12 +4,14 @@ import { SimulationStatus } from "../api";
 
 interface PositionBoardProps {
   currentPrice: number;
-  status: SimulationStatus | null; // 부모로부터 지갑 상태를 받음
-  closeMarketPosition: () => Promise<void>; // 부모로부터 종료 함수를 받음
+  activeSymbol: string; // 🆕 현재 차트의 심볼을 받아오면 더 정확한 처리가 가능합니다.
+  status: SimulationStatus | null;
+  closeMarketPosition: () => Promise<void>;
 }
 
 export const PositionBoard: React.FC<PositionBoardProps> = ({
   currentPrice,
+  activeSymbol,
   status,
   closeMarketPosition,
 }) => {
@@ -77,6 +79,17 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
               const isLong = pos.side === "LONG";
               const sideColor = isLong ? "#00b561" : "#ff4c4c";
 
+              // 🌟 시장 가격 결정 로직 🌟
+              // 1. 백엔드에서 준 mark_price가 있으면 그것을 사용
+              // 2. 만약 현재 차트 심볼과 포지션 심볼이 같다면 실시간 currentPrice 사용
+              // 3. 둘 다 아니면 진입가 유지 (가격 꼬임 방지)
+              const markPrice =
+                pos.mark_price && pos.mark_price !== 0
+                  ? pos.mark_price
+                  : symbol === activeSymbol
+                    ? currentPrice
+                    : pos.entry_price;
+
               // ROE 및 PNL 계산
               const roe =
                 (pos.unrealized_pnl / (pos.isolated_margin || 1)) * 100;
@@ -84,6 +97,7 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
 
               return (
                 <tr key={symbol} style={styles.tdRow}>
+                  {/* 1. 계약 (Symbol) */}
                   <td style={styles.td}>
                     <span
                       style={{
@@ -99,17 +113,27 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                     </span>
                     <span style={styles.leverageBadge}>{pos.leverage}x</span>
                   </td>
+
+                  {/* 2. 수량 (Size) */}
                   <td style={styles.td}>{pos.size.toFixed(4)}</td>
+
+                  {/* 3. 진입 가격 (Entry) */}
                   <td style={styles.td}>
-                    {pos.entry_price.toLocaleString(undefined, {
+                    {Number(pos.entry_price).toLocaleString(undefined, {
                       minimumFractionDigits: 2,
                     })}
                   </td>
+
+                  {/* 4. 시장 가격 (Mark) - 수정됨 */}
                   <td style={styles.td}>
-                    {currentPrice.toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                    })}
+                    <strong style={{ color: "#eaecef" }}>
+                      {Number(markPrice).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}
+                    </strong>
                   </td>
+
+                  {/* 5. 강제 청산가 (Liq. Price) - 수정됨 */}
                   <td
                     style={{
                       ...styles.td,
@@ -117,15 +141,26 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                       fontWeight: "bold",
                     }}
                   >
-                    {pos.liquidation_price.toLocaleString(undefined, {
+                    {Number(pos.liquidation_price).toLocaleString(undefined, {
                       minimumFractionDigits: 2,
                     })}
                   </td>
+
+                  {/* 6. 격리 증거금 (Margin) - 수정됨 */}
                   <td style={styles.td}>{pos.isolated_margin.toFixed(2)}</td>
+
+                  {/* 7. TP / SL */}
                   <td style={styles.td}>
-                    {pos.take_profit ? pos.take_profit.toLocaleString() : "--"}{" "}
-                    / {pos.stop_loss ? pos.stop_loss.toLocaleString() : "--"}
+                    {pos.take_profit_price
+                      ? Number(pos.take_profit_price).toLocaleString()
+                      : "--"}{" "}
+                    /{" "}
+                    {pos.stop_loss_price
+                      ? Number(pos.stop_loss_price).toLocaleString()
+                      : "--"}
                   </td>
+
+                  {/* 8. 미실현 손익 (ROE%) */}
                   <td
                     style={{
                       ...styles.td,
@@ -133,7 +168,7 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                       fontWeight: "bold",
                     }}
                   >
-                    <div style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
+                    <div className="tabular-nums">
                       {pos.unrealized_pnl > 0 ? "+" : ""}
                       {pos.unrealized_pnl.toFixed(2)} USDT
                     </div>
@@ -142,9 +177,12 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                       {roe.toFixed(2)}%)
                     </div>
                   </td>
+
+                  {/* 9. 종료 (Close) */}
                   <td style={styles.td}>
                     <button
                       onClick={() => closeMarketPosition()}
+                      className="close-btn"
                       style={styles.closeBtn}
                     >
                       Market Close

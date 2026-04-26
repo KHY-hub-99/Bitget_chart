@@ -47,15 +47,17 @@ export const subscribeChartData = (
 // --- [ 2. 시뮬레이션(격리 모드) 전용 API ] ---
 
 export interface Position {
+  symbol: string;
   side: "LONG" | "SHORT";
   leverage: number;
   entry_price: number;
   size: number;
+  mark_price: number;
   isolated_margin: number;
   liquidation_price: number;
   unrealized_pnl: number;
-  take_profit: number | null;
-  stop_loss: number | null;
+  take_profit_price: number | null;
+  stop_loss_price: number | null;
 }
 
 export interface SimulationStatus {
