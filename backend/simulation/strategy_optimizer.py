@@ -54,7 +54,7 @@ class StrategyOptimizer:
 
         # [수정 1] UI 멈춤 방지: 모든 로그를 보내지 않고 진행률을 10개 단위로 스로틀링(Throttling)
         for idx, pos_idx in enumerate(signal_positions):
-            if idx % 10 == 0 or idx == total_signals - 1:
+            if idx % 20 == 0 or idx == total_signals - 1:
                 self.logger(f"[진행도] {symbol} {timeframe} 분석 중... ({idx + 1}/{total_signals})")
                 # [추가] 0.01초만 쉬어줘도 웹소켓이 로그를 보낼 수 있는 숨통이 트입니다.
                 import time
