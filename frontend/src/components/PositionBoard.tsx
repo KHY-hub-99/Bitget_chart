@@ -82,15 +82,11 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
               // 🌟 시장 가격 결정 로직 🌟
               // 🎯 3. positionKey가 아닌 포지션 객체 안의 진짜 'pos.symbol'을 비교합니다!
               const markPrice =
-                pos.symbol === activeSymbol && currentPrice > 0
-                  ? currentPrice
-                  : pos.mark_price && pos.mark_price !== 0
-                    ? pos.mark_price
-                    : pos.entry_price;
+                pos.mark_price && pos.mark_price !== 0
+                  ? pos.mark_price
+                  : currentPrice;
 
-              const unrealizedPnl = isLong
-                ? (markPrice - pos.entry_price) * pos.size
-                : (pos.entry_price - markPrice) * pos.size;
+              const unrealizedPnl = pos.unrealized_pnl;
 
               // ROE 및 PNL 계산
               const roe = (unrealizedPnl / (pos.isolated_margin || 1)) * 100;

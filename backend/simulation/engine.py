@@ -127,6 +127,8 @@ class SimulationEngine:
         for pos_key, pos in list(wallet.positions.items()):
             if pos.symbol != symbol:
                 continue
+            
+            pos.update_pnl(current_price)
 
             # 1. 강제 청산 터치
             is_liquidated = False
