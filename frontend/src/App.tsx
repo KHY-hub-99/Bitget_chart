@@ -2,18 +2,23 @@ import { useEffect, useState } from "react";
 import { fetchChartData, subscribeChartData } from "./api";
 import TradingChart from "./TradingChart";
 
+// 🆕 새로 만든 시뮬레이션 컴포넌트 임포트
+import { OrderPanel } from "./components/OrderPanel";
+import { PositionBoard } from "./components/PositionBoard";
+
 function App() {
   const [chartData, setChartData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // 1️⃣ 🎯 바이낸스 심볼 규격으로 기본값 변경 ("BTCUSDT")
+  // 🆕 현재 시장가(Current Price)를 추적하는 상태 (주문 패널과 포지션 현황판에 전달)
+  const [currentPrice, setCurrentPrice] = useState<number>(0);
+
   const [symbol, setSymbol] = useState<string>("BTCUSDT");
   const [timeframe, setTimeframe] = useState<string>("15m");
-  const [days, setDays] = useState<number>(30); // 기본 로딩 속도를 위해 30일로 세팅
+  const [days, setDays] = useState<number>(30);
 
-  // 1-1️⃣ 🎯 UI 상태도 바이낸스 규격으로!
   const [inputSymbol, setInputSymbol] = useState<string>("BTCUSDT");
   const [inputTimeframe, setInputTimeframe] = useState<string>("15m");
   const [inputDays, setInputDays] = useState<number>(30);
@@ -30,28 +35,24 @@ function App() {
     setVisibleLayers((prev) => ({ ...prev, [layer]: !prev[layer] }));
   };
 
+  // 1️⃣ 기존 데이터 로딩 및 웹소켓 훅 유지
   useEffect(() => {
     let ws: WebSocket | null = null;
-    // 🎯 [해결 핵심] 현재 effect의 유효성을 체크하는 플래그
     let isActive = true;
 
-    // 1️⃣ 새로운 심볼 로딩 시작 시 기존 상태 초기화
     setIsLoading(true);
     setChartData(null);
     setError(null);
     setIsLive(false);
 
-    // 2️⃣ 과거 데이터 로드
     fetchChartData(symbol, timeframe, days)
       .then((initialData) => {
-        if (!isActive) return; // 🎯 이전 요청이 언마운트되었다면 무시
+        if (!isActive) return;
         setChartData({ ...initialData, symbol });
         setIsLoading(false);
 
-        // 3️⃣ 실시간 데이터 구독
         ws = subscribeChartData(symbol, timeframe, (newData) => {
-          if (!isActive) return; // 🎯 [해결 핵심] 컴포넌트가 변경/언마운트된 경우 이전 웹소켓 데이터 완벽 차단
-
+          if (!isActive) return;
           setIsLive(true);
 
           setChartData((prev: any) => {
@@ -59,19 +60,14 @@ function App() {
               return prev;
 
             if (!prev || prev.symbol !== symbol || newData.symbol !== symbol) {
-              console.log(
-                `[System] Symbol Changed or Mismatch: ${symbol}. Resetting state.`,
-              );
               return { ...newData, symbol };
             }
 
             const lastPrice = newData.candles[newData.candles.length - 1].close;
             if (symbol === "ETHUSDT" && lastPrice > 10000) {
-              console.warn("BTC data detected in ETH channel. Blocked.");
               return prev;
             }
 
-            // ... (이하 기존 병합 로직 동일)
             const candleMap = new Map();
             prev.candles.forEach((c: any) => candleMap.set(c.time, c));
             newData.candles.forEach((c: any) => candleMap.set(c.time, c));
@@ -79,7 +75,6 @@ function App() {
               (a, b) => a.time - b.time,
             );
 
-            // 지표 병합
             const mergeIndicator = (prevIdx: any[], newIdx: any[]) => {
               const iMap = new Map();
               if (prevIdx) prevIdx.forEach((i) => iMap.set(i.time, i));
@@ -95,7 +90,6 @@ function App() {
               );
             });
 
-            // 마커 병합
             const markerMap = new Map();
             prev.markers?.forEach((m: any) =>
               markerMap.set(`${m.time}-${m.text}`, m),
@@ -123,17 +117,21 @@ function App() {
         setIsLoading(false);
       });
 
-    // 4️⃣ 클린업: 심볼 변경 시 이전 웹소켓 연결 종료 및 플래그 비활성화
     return () => {
-      isActive = false; // 🎯 플래그를 false로 전환하여 좀비 콜백 차단
-      if (ws) {
-        console.log(`Closing connection for ${symbol}`);
-        ws.close();
-      }
+      isActive = false;
+      if (ws) ws.close();
     };
   }, [symbol, timeframe, days]);
 
-  // 스타일 생략 (기존과 동일하게 유지하시면 됩니다)
+  // 2️⃣ 🆕 ChartData가 갱신될 때마다 가장 마지막 캔들의 종가를 currentPrice로 설정!
+  useEffect(() => {
+    if (chartData && chartData.candles && chartData.candles.length > 0) {
+      const lastCandle = chartData.candles[chartData.candles.length - 1];
+      setCurrentPrice(lastCandle.close);
+    }
+  }, [chartData]);
+
+  // --- 스타일 정의 ---
   const selectStyle = {
     backgroundColor: "#1e222d",
     color: "#d1d4dc",
@@ -192,9 +190,10 @@ function App() {
         display: "flex",
         flexDirection: "column",
         fontFamily: "Inter, sans-serif",
+        overflow: "hidden",
       }}
     >
-      {/* 헤더 생략 (기존과 동일) */}
+      {/* --- 기존 헤더 유지 --- */}
       <header
         style={{
           height: "60px",
@@ -204,9 +203,9 @@ function App() {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
+          flexShrink: 0,
         }}
       >
-        {/* 생략... */}
         <h1
           style={{
             margin: 0,
@@ -241,6 +240,7 @@ function App() {
         </div>
       </header>
 
+      {/* --- 기존 툴바 유지 --- */}
       <div
         style={{
           padding: "12px 24px",
@@ -249,11 +249,11 @@ function App() {
           display: "flex",
           gap: "20px",
           alignItems: "center",
+          flexShrink: 0,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>Market:</span>
-          {/* 🎯 바이낸스 심볼 벨류 변경 */}
           <select
             style={selectStyle}
             value={inputSymbol}
@@ -263,7 +263,6 @@ function App() {
             <option value="ETHUSDT">ETH/USDT</option>
           </select>
         </div>
-
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>
             Timeframe:
@@ -281,7 +280,6 @@ function App() {
             <option value="1d">1d</option>
           </select>
         </div>
-
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>
             History (Days):
@@ -295,7 +293,6 @@ function App() {
             onKeyDown={(e) => e.key === "Enter" && handleApplySettings()}
           />
         </div>
-
         <button style={btnStyle} onClick={handleApplySettings}>
           적용
         </button>
@@ -309,6 +306,7 @@ function App() {
           display: "flex",
           gap: "10px",
           flexWrap: "wrap",
+          flexShrink: 0,
         }}
       >
         {Object.entries(visibleLayers).map(([key, isVisible]) => (
@@ -324,13 +322,15 @@ function App() {
         ))}
       </div>
 
+      {/* --- 🌟 메인 레이아웃 구역 (차트 + 하단 패널 분할) --- */}
       <main
         style={{
           flex: 1,
-          padding: "20px",
+          padding: "10px",
           display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
+          flexDirection: "column", // 세로 분할 (위: 차트, 아래: 패널)
+          gap: "10px",
+          minHeight: 0, // Flex 자식이 넘칠 때 찌그러짐 방지
         }}
       >
         {error ? (
@@ -341,32 +341,72 @@ function App() {
               borderRadius: "12px",
               border: "1px solid #ef5350",
               textAlign: "center",
+              margin: "auto",
             }}
           >
             <h3 style={{ color: "#ef5350" }}>Connection Failed</h3>
             <p style={{ color: "#a3a6af" }}>{error}</p>
           </div>
         ) : isLoading || !chartData ? (
-          <div>LOADING...</div>
+          <div style={{ margin: "auto", color: "#d1d4dc" }}>LOADING...</div>
         ) : (
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              backgroundColor: "#131722",
-              borderRadius: "12px",
-              border: "1px solid #2a2e39",
-              overflow: "hidden",
-            }}
-          >
-            {/* 🎯 TradingChart에 현재 심볼 전달 */}
-            <TradingChart
-              key={`${symbol}-${timeframe}`}
-              data={chartData}
-              settings={visibleLayers}
-              symbol={symbol}
-            />
-          </div>
+          <>
+            {/* 📈 1. 상단: 차트 영역 (남은 공간의 비율을 크게 차지하도록 flex: 1 설정) */}
+            <div
+              style={{
+                flex: 1, // 남은 세로 공간 다 차지
+                minHeight: "40%", // 최소 높이 보장
+                backgroundColor: "#131722",
+                borderRadius: "12px",
+                border: "1px solid #2a2e39",
+                overflow: "hidden", // 차트가 삐져나가지 않게
+              }}
+            >
+              <TradingChart
+                key={`${symbol}-${timeframe}`}
+                data={chartData}
+                settings={visibleLayers}
+                symbol={symbol}
+              />
+            </div>
+
+            {/* 🎮 2. 하단: 패널 영역 (고정 높이 부여) */}
+            <div
+              style={{
+                display: "flex", // 가로 분할 (좌: 포지션, 우: 주문)
+                height: "320px", // 하단 패널 고정 높이
+                flexShrink: 0,
+                gap: "10px",
+              }}
+            >
+              {/* 좌측: 포지션 현황판 (나머지 가로 공간 모두 차지) */}
+              <div
+                style={{
+                  flex: 1,
+                  backgroundColor: "#131722",
+                  borderRadius: "12px",
+                  border: "1px solid #2a2e39",
+                  overflow: "hidden",
+                }}
+              >
+                <PositionBoard currentPrice={currentPrice} />
+              </div>
+
+              {/* 우측: 주문 패널 (너비 320px 고정) */}
+              <div
+                style={{
+                  width: "320px",
+                  minWidth: "320px",
+                  backgroundColor: "#131722",
+                  borderRadius: "12px",
+                  border: "1px solid #2a2e39",
+                  overflow: "hidden",
+                }}
+              >
+                <OrderPanel currentPrice={currentPrice} />
+              </div>
+            </div>
+          </>
         )}
       </main>
     </div>

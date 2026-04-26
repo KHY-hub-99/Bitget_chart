@@ -1,6 +1,9 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from contextlib import asynccontextmanager
+from decimal import Decimal
+from typing import Optional
 import asyncio
 import time
 import uvicorn
@@ -10,13 +13,38 @@ import numpy as np
 import os
 from datetime import datetime, timezone
 
+# [기존 데이터 피드 및 서비스]
 from data_process.load_data import CryptoDataFeed
 from services.chat_services import convert_df_to_chart_data
 
+# [시뮬레이션 핵심 로직 임포트]
+from simulation.models import Wallet, PositionSide
+from simulation.engine import SimulationEngine
+
+# --- [1. 경로 및 초기 설정] ---
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 db_folder = os.path.join(base_dir, "backend", "market_data")
 db_path = os.path.join(db_folder, "crypto_dashboard.db")
 
+# [시뮬레이션 전용 전역 상태 관리]
+sim_wallet = Wallet(initial_balance=Decimal('10000.0'))
+sim_engine = SimulationEngine()
+
+# [시뮬레이션 요청 모델]
+class OrderRequest(BaseModel):
+    symbol: str = "BTC/USDT"
+    side: PositionSide
+    leverage: int
+    margin: Decimal
+    current_price: Decimal
+    take_profit: Optional[Decimal] = None
+    stop_loss: Optional[Decimal] = None
+
+class TickRequest(BaseModel):
+    symbol: str = "BTC/USDT"
+    current_price: Decimal
+
+# --- [2. 백그라운드 데이터 작업 로직 (기존 동일)] ---
 def preload_initial_market_data():
     symbols = ["BTCUSDT", "ETHUSDT"]
     timeframes = ["1m", "5m", "15m", "1h"]
@@ -100,7 +128,7 @@ async def continuous_data_sync_worker():
         # 15초 대기 후 다시 처음부터 수집 시작
         await asyncio.sleep(15)
 
-# [1] Lifespan: 서버 가동 시 상태 메시지 출력
+# Lifespan: 서버 가동 시 상태 메시지 출력
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("\n" + "="*60)
@@ -120,7 +148,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Crypto Trading Dashboard API", lifespan=lifespan)
 
-# CORS 설정
+# --- [3. FastAPI 앱 및 CORS 설정] ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -129,15 +157,72 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# [2] 백그라운드 작업: 과거 데이터 대량 백필 (바이낸스 기준)
+# --- [4. 시뮬레이션 API 엔드포인트 (통합)] ---
+@app.get("/api/simulation/status")
+async def get_simulation_status():
+    """현재 지갑 잔고와 포지션 상태를 조회"""
+    return {
+        "total_balance": float(sim_wallet.total_balance),
+        "available_balance": float(sim_wallet.available_balance),
+        "frozen_margin": float(sim_wallet.frozen_margin),
+        "positions": {
+            symbol: {
+                "side": pos.side,
+                "leverage": pos.leverage,
+                "entry_price": float(pos.entry_price),
+                "size": float(pos.size),
+                "isolated_margin": float(pos.isolated_margin),
+                "liquidation_price": float(pos.liquidation_price),
+                "unrealized_pnl": float(pos.unrealized_pnl),
+                "take_profit": float(pos.take_profit_price) if pos.take_profit_price else None,
+                "stop_loss": float(pos.stop_loss_price) if pos.stop_loss_price else None
+            }
+            for symbol, pos in sim_wallet.positions.items()
+        }
+    }
+
+@app.post("/api/simulation/order")
+async def place_market_order(req: OrderRequest):
+    """시장가 주문 체결"""
+    if req.margin > sim_wallet.available_balance:
+        raise HTTPException(status_code=400, detail="주문 가능 잔액이 부족합니다.")
+    
+    if req.symbol in sim_wallet.positions:
+        raise HTTPException(status_code=400, detail="이미 해당 코인의 포지션이 존재합니다.")
+
+    sim_engine.open_position(
+        wallet=sim_wallet,
+        symbol=req.symbol,
+        side=req.side,
+        entry_price=req.current_price,
+        leverage=req.leverage,
+        margin=req.margin,
+        take_profit=req.take_profit,
+        stop_loss=req.stop_loss
+    )
+    return {"message": "주문 체결 성공", "status": "success"}
+
+@app.post("/api/simulation/tick")
+async def process_price_tick(req: TickRequest):
+    """가격 변동 시 청산/익절/손절 감시"""
+    result = sim_engine.check_triggers(sim_wallet, req.symbol, req.current_price)
+    return {"tick_result": result}
+
+@app.post("/api/simulation/reset")
+async def reset_simulation():
+    """시뮬레이션 초기화"""
+    global sim_wallet
+    sim_wallet = Wallet(initial_balance=Decimal('10000.0'))
+    return {"message": "초기화 완료"}
+
+# --- [5. 기존 히스토리 및 웹소켓 엔드포인트] ---
 def backfill_historical_data(symbol: str, timeframe: str, days: int):
-    print(f"\n[BACKGROUND 🛠️] {days}일치 과거 데이터 백필 시작")
+    print(f"\n[BACKGROUND] {days}일치 과거 데이터 백필 시작")
     feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
-    # 🎯 역사적 데이터 수집 함수 호출
+    # 역사적 데이터 수집 함수 호출
     feed.sync_historical_data(start_days=days)
     print(f"[BACKGROUND] {symbol} 백필 및 지표 재계산 완료")
 
-# [3] API: 과거 히스토리 조회 및 차트 데이터 반환
 @app.get("/api/history")
 async def get_history(
     background_tasks: BackgroundTasks,
@@ -148,7 +233,7 @@ async def get_history(
     feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
     fixed_limit = 5000 
     
-    # 1. 일단 DB 로드
+    # DB 로드
     feed.load_latest_from_db(limit=fixed_limit)
     
     # [동적 타임프레임 초 변환 로직]
@@ -167,7 +252,7 @@ async def get_history(
         last_time = feed.df.index[-1]
         now = datetime.now(timezone.utc)
         
-        # 🎯 [핵심] 마지막 캔들이 현재 시간보다 '1캔들' 이상 차이나면 업데이트!
+        # 마지막 캔들이 현재 시간보다 '1캔들' 이상 차이나면 업데이트
         if last_time.tzinfo is None:
             last_time = last_time.replace(tzinfo=timezone.utc)
         
@@ -177,7 +262,7 @@ async def get_history(
             is_outdated = True
             print(f"[{symbol}] 시간 격차 감지: {gap_seconds}초 (기준: {interval_seconds}초)")
 
-    # 2. 데이터 부족 또는 오래된 데이터일 경우 API 호출
+    # 데이터 부족 또는 오래된 데이터일 경우 API 호출
     if feed.df.empty or len(feed.df) < fixed_limit or is_outdated:
         print(f"[{symbol}] 데이터 동기화 필요 (이유: {'비어있음' if feed.df.empty else '오래됨' if is_outdated else '개수부족'})")
         feed.sync_recent_data(required_limit=fixed_limit)
@@ -188,13 +273,13 @@ async def get_history(
             feed.refresh_indicators()
             feed.load_latest_from_db(limit=fixed_limit)
 
-    # 3. 과거 백필(1년치 등)은 여전히 백그라운드에서 진행
+    # 과거 백필(1년치 등)은 여전히 백그라운드에서 진행
     background_tasks.add_task(backfill_historical_data, symbol, timeframe, days)
 
     chart_df = feed.get_chart_df(limit=fixed_limit)
     return convert_df_to_chart_data(chart_df)
 
-# [4] WebSocket: 실시간 데이터 동기화
+# WebSocket: 실시간 데이터 동기화
 @app.websocket("/ws/chart")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -222,7 +307,7 @@ async def websocket_endpoint(
                 latest_data['symbol'] = symbol 
                 await websocket.send_json(latest_data)
                 
-                # 🎯 [로그 출력 로직]
+                # [로그 출력 로직]
                 last_candle = latest_chart_df.iloc[-1]
                 current_price = last_candle['close']
                 now_str = datetime.now().strftime("%H:%M:%S")
@@ -240,7 +325,7 @@ async def websocket_endpoint(
     except Exception as e:
         print(f"[WS 🔴] 에러 발생: {e}")
 
-# [5] API: DB 상태 점검 (디버깅용)
+# API: DB 상태 점검 (디버깅용)
 @app.get("/api/db-status")
 async def get_db_status(symbol: str = "BTCUSDT", timeframe: str = "15m"):
     try:
