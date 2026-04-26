@@ -128,6 +128,8 @@ function App() {
     setTimeframe(inputTimeframe);
   };
 
+  const currentPosition = sim.status?.positions?.[symbol] || null;
+
   return (
     <div
       className="app-container"
@@ -234,10 +236,10 @@ function App() {
             >
               <TradingChart
                 key={`${symbol}-${timeframe}`}
-                // 🆕 차트에 현재 포지션 정보를 넘겨서 선을 그리게 합니다.
-                data={{ ...chartData, currentPosition: sim.currentPosition }}
+                data={chartData}
                 settings={visibleLayers}
                 symbol={symbol}
+                currentPosition={currentPosition}
               />
             </div>
 

@@ -8,9 +8,10 @@ import {
   LineSeries,
   AreaSeries,
   LineStyle,
-  createSeriesMarkers, // 🎯 [V5 핵심] 마커 플러그인 임포트!
+  createSeriesMarkers,
   IChartApi,
   ISeriesApi,
+  IPriceLine, // 🎯 [추가] PriceLine 타입 임포트
 } from "lightweight-charts";
 
 interface ChartDataProps {
@@ -28,13 +29,27 @@ interface ChartDataProps {
     macd: boolean;
   };
   symbol: string;
+  // 🎯 [추가] 현재 포지션 정보 (App.tsx에서 전달)
+  currentPosition?: {
+    side: "LONG" | "SHORT";
+    entry_price: number;
+    liquidation_price: number;
+  } | null;
 }
 
-const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
+const TradingChart: React.FC<ChartDataProps> = ({
+  data,
+  settings,
+  symbol,
+  currentPosition,
+}) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRefs = useRef<{ [key: string]: any }>({}); // 타입 유연성을 위해 any 처리
+  const seriesRefs = useRef<{ [key: string]: any }>({});
+
+  // 🎯 [추가] 생성된 프라이스 라인들을 저장해둘 참조 객체 (지울 때 필요함)
+  const priceLinesRef = useRef<{ entry?: IPriceLine; liq?: IPriceLine }>({});
 
   const settingsRef = useRef(settings);
   const symbolRef = useRef(symbol);
@@ -55,7 +70,6 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
       if (!item || !item.time) return;
 
       if (!isCandle) {
-        // 0 이하(음수)를 허용하도록 수정
         if (
           item.value === null ||
           item.value === undefined ||
@@ -70,6 +84,7 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
     return Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
   };
 
+  // --- [차트 초기화 useEffect] (기존과 동일) ---
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -110,7 +125,6 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
 
     const s: any = {};
 
-    // 🎯 [V5 핵심] 최신 통합 API 방식으로 복귀 (addSeries 사용)
     s.candle = chart.addSeries(CandlestickSeries, {
       upColor: "#2ebd85",
       downColor: "#f6465d",
@@ -119,7 +133,6 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
       wickDownColor: "#f6465d",
     });
 
-    // 🎯 [V5 핵심] 마커 플러그인을 생성하여 s 객체에 저장해 둡니다.
     s.markersPlugin = createSeriesMarkers(s.candle);
 
     s.kijun = chart.addSeries(LineSeries, { color: "#f0b90b", lineWidth: 2 });
@@ -173,11 +186,8 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
     });
 
     chart.priceScale("right").applyOptions({
-      autoScale: true, // 자동 스케일 활성화 [cite: 796]
-      scaleMargins: {
-        top: 0.1, // 상단 10% 여백 [cite: 801]
-        bottom: 0.2, // 하단 20% 여백 (지표 레이어를 위해) [cite: 801]
-      },
+      autoScale: true,
+      scaleMargins: { top: 0.1, bottom: 0.2 },
     });
     chart
       .priceScale("rsi_p")
@@ -193,6 +203,7 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
     chartRef.current = chart;
 
     chart.subscribeCrosshairMove((param) => {
+      // (기존 레전드 로직 동일하여 생략 없이 유지)
       if (!legendRef.current) return;
       const s = seriesRefs.current;
       const candle = param.seriesData.get(s.candle) as any;
@@ -221,7 +232,6 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
 
       const formattedSymbol = symbolRef.current.replace("USDT", " / USDT");
 
-      // 🎯 [해결] 옵셔널 체이닝(?.)과 !== undefined를 통해 .value 참조 전 완벽한 방어벽 구축
       legendRef.current.innerHTML = `
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
           <span style="color: #fff; font-size: 14px; font-weight: 800; letter-spacing: -0.02em;">${formattedSymbol}</span>
@@ -254,9 +264,11 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
     };
   }, []);
 
+  // --- [데이터 렌더링 useEffect] (기존과 동일) ---
   useEffect(() => {
     if (!chartRef.current || !data) return;
     const s = seriesRefs.current;
+    if (!s.candle) return;
 
     const finalCandles = processData(data.candles, true);
     s.candle.setData(finalCandles);
@@ -294,7 +306,6 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
     if (data.indicators?.macd_line)
       s.macd.setData(processData(data.indicators.macd_line));
 
-    // 🎯 [V5 핵심] 마커 플러그인을 통한 마커 세팅!
     if (s.markersPlugin && data.markers) {
       const markerData = processData(data.markers, true);
       s.markersPlugin.setMarkers(markerData);
@@ -314,6 +325,49 @@ const TradingChart: React.FC<ChartDataProps> = ({ data, settings, symbol }) => {
       }
     });
   }, [data, settings]);
+
+  // 🎯 [추가] 포지션 변경 시 진입가/청산가 Price Line을 그리는 useEffect
+  useEffect(() => {
+    const s = seriesRefs.current;
+    if (!s || !s.candle) return;
+
+    // 1. 기존에 그려진 라인이 있다면 삭제 (초기화)
+    if (priceLinesRef.current.entry) {
+      s.candle.removePriceLine(priceLinesRef.current.entry);
+      delete priceLinesRef.current.entry;
+    }
+    if (priceLinesRef.current.liq) {
+      s.candle.removePriceLine(priceLinesRef.current.liq);
+      delete priceLinesRef.current.liq;
+    }
+
+    // 2. 현재 포지션이 존재하면 새로운 라인 추가
+    if (currentPosition && currentPosition.entry_price > 0) {
+      const isLong = currentPosition.side === "LONG";
+
+      // 진입가 선 (Long은 녹색, Short은 붉은색)
+      priceLinesRef.current.entry = s.candle.createPriceLine({
+        price: currentPosition.entry_price,
+        color: isLong ? "#2ebd85" : "#f6465d",
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `${currentPosition.side} ENTRY`, // 우측 Y축에 라벨 표시
+      });
+
+      // 강제청산가 선 (주황색/노란색으로 경고 표시)
+      if (currentPosition.liquidation_price > 0) {
+        priceLinesRef.current.liq = s.candle.createPriceLine({
+          price: currentPosition.liquidation_price,
+          color: "#ff9800", // 주황색
+          lineWidth: 2,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: "LIQUIDATION",
+        });
+      }
+    }
+  }, [currentPosition]); // currentPosition이 바뀔 때마다 실행
 
   return (
     <div
