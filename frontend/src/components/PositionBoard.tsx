@@ -86,7 +86,9 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                   ? pos.mark_price
                   : currentPrice;
 
-              const unrealizedPnl = pos.unrealized_pnl;
+              const unrealizedPnl = isLong
+                ? (markPrice - pos.entry_price) * pos.size
+                : (pos.entry_price - markPrice) * pos.size;
 
               // ROE 및 PNL 계산
               const roe = (unrealizedPnl / (pos.isolated_margin || 1)) * 100;
