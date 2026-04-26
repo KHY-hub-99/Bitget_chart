@@ -439,49 +439,60 @@ async def get_db_status(symbol: str = "BTCUSDT", timeframe: str = "15m"):
 # --- [6. 분석 및 최적화 데이터 API (추가)] ---
 
 @app.get("/api/strategy-ranking")
-async def get_strategy_ranking():
+async def get_strategy_ranking(
+    symbol: str = Query("ALL", description="조회할 코인 심볼 (예: BTCUSDT, ALL)"),
+    timeframe: str = Query("ALL", description="조회할 타임프레임 (예: 15m, ALL)")
+):
     """
-    DB에 저장된 ml_trading_dataset 테이블을 분석하여 
-    전략 조합별 수익률, 승률, 그리고 리스크(MDD) 랭킹을 반환합니다.
+    심볼과 타임프레임 조건에 따라 전략 랭킹을 반환합니다.
     """
     if not os.path.exists(db_path):
         raise HTTPException(status_code=404, detail="데이터베이스 파일을 찾을 수 없습니다.")
 
     try:
-        # SQL 쿼리 수정: MDD 및 신규 상태값(청산, 스위칭) 반영
-        query = """
+        # 1. 동적 WHERE 조건 생성
+        where_clauses = []
+        params = []
+        
+        if symbol != "ALL":
+            where_clauses.append("symbol = ?")
+            params.append(symbol)
+        if timeframe != "ALL":
+            where_clauses.append("timeframe = ?")
+            params.append(timeframe)
+            
+        where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+        # 2. 쿼리문 작성 (위에서 만든 where_sql 삽입)
+        query = f"""
         SELECT 
             position_mode, 
             leverage, 
             tp_ratio, 
             sl_ratio,
             COUNT(*) as total_trades,
-            -- 승리/패배/청산/스위칭 횟수 집계
             SUM(CASE WHEN result_status = 'TAKE_PROFIT' THEN 1 ELSE 0 END) as wins,
             SUM(CASE WHEN result_status = 'STOP_LOSS' THEN 1 ELSE 0 END) as losses,
             SUM(CASE WHEN result_status = 'LIQUIDATED' THEN 1 ELSE 0 END) as liquidations,
             SUM(CASE WHEN result_status = 'SWITCHED' THEN 1 ELSE 0 END) as switches,
             SUM(CASE WHEN result_status = 'TIMEOUT' THEN 1 ELSE 0 END) as timeouts,
-            -- 수익 관련 지표 (수수료/슬리피지가 반영된 Net PNL)
             ROUND(SUM(realized_pnl), 2) as total_pnl,
             ROUND(AVG(realized_pnl), 2) as avg_pnl,
-            -- 리스크 및 성과 지표 추가
             SUM(pyramid_count) as total_pyramid_count,
-            ROUND(AVG(mdd_rate), 2) as avg_mdd_rate,      -- 평균 낙폭 (%)
-            ROUND(MIN(mdd_rate), 2) as max_drawdown      -- 최악의 낙폭 (%)
+            ROUND(AVG(mdd_rate), 2) as avg_mdd_rate,
+            ROUND(MIN(mdd_rate), 2) as max_drawdown
         FROM ml_trading_dataset
+        {where_sql}
         GROUP BY position_mode, leverage, tp_ratio, sl_ratio
         ORDER BY total_pnl DESC;
         """
         
         with sqlite3.connect(db_path) as conn:
-            # 딕셔너리 형태로 데이터를 가져오기 위해 Row 팩토리 설정
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute(query)
+            cursor.execute(query, params) # params 전달
             rows = cursor.fetchall()
             
-            # 결과 가공 (JSON 반환용)
             ranking_data = [dict(row) for row in rows]
             
             return {

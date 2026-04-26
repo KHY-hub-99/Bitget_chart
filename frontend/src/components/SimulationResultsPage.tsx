@@ -5,16 +5,15 @@ const SimulationResultsPage: React.FC = () => {
   const [rankings, setRankings] = useState<StrategyRank[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
-  // 필터 상태 추가
-  const [symbol, setSymbol] = useState<string>("BTCUSDT");
-  const [timeframe, setTimeframe] = useState<string>("15m");
+  // 필터 상태
+  const [symbol, setSymbol] = useState<string>("ALL");
+  const [timeframe, setTimeframe] = useState<string>("ALL");
 
   const loadRankings = async () => {
     setLoading(true);
     try {
-      // 백엔드 API가 파라미터를 지원하도록 수정되었다면 전달,
-      // 아니라면 전체를 가져와서 프론트에서 필터링 가능
-      const data = await analysisApi.getRanking();
+      // 선택된 필터값을 API로 전달
+      const data = await analysisApi.getRanking(symbol, timeframe);
       setRankings(data);
     } catch (error) {
       console.error("랭킹 데이터 로드 실패:", error);
@@ -23,138 +22,192 @@ const SimulationResultsPage: React.FC = () => {
     }
   };
 
+  // 필터가 변경될 때마다 데이터 다시 불러오기
   useEffect(() => {
     loadRankings();
-  }, []);
+  }, [symbol, timeframe]);
 
   return (
     <div style={pageContainerStyle}>
-      <div style={headerContainerStyle}>
-        <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-          <h3 style={titleStyle}>전략 성과 랭킹</h3>
+      {/* 1. 상단 헤더 및 필터 영역 */}
+      <div style={headerCardStyle}>
+        <div>
+          <h2 style={titleStyle}>전략 성과 랭킹 보드</h2>
+          <p style={subtitleStyle}>
+            최적의 수익성과 안정성을 가진 파라미터 조합을 탐색합니다.
+          </p>
+        </div>
 
-          {/* 심볼/타임프레임 선택기 추가 */}
+        <div style={controlsContainerStyle}>
           <div style={filterGroupStyle}>
+            <span style={labelStyle}>Symbol</span>
             <select
               value={symbol}
               onChange={(e) => setSymbol(e.target.value)}
               style={selectStyle}
             >
+              <option value="ALL">전체 심볼</option>
               <option value="BTCUSDT">BTCUSDT</option>
               <option value="ETHUSDT">ETHUSDT</option>
             </select>
+          </div>
+
+          <div style={filterGroupStyle}>
+            <span style={labelStyle}>Timeframe</span>
             <select
               value={timeframe}
               onChange={(e) => setTimeframe(e.target.value)}
               style={selectStyle}
             >
+              <option value="ALL">전체 시간</option>
               <option value="1m">1m</option>
               <option value="5m">5m</option>
               <option value="15m">15m</option>
               <option value="1h">1h</option>
             </select>
           </div>
-        </div>
 
-        <button
-          onClick={loadRankings}
-          disabled={loading}
-          style={loading ? disabledBtnStyle : refreshBtnStyle}
-        >
-          {loading ? "갱신 중..." : "새로고침"}
-        </button>
+          <button
+            onClick={loadRankings}
+            disabled={loading}
+            style={loading ? disabledBtnStyle : refreshBtnStyle}
+          >
+            {loading ? "데이터 갱신 중..." : "새로고침"}
+          </button>
+        </div>
       </div>
 
+      {/* 2. 랭킹 테이블 영역 */}
       <div style={tableWrapperStyle}>
         <table style={tableStyle}>
           <thead>
             <tr>
-              <th style={thStyle}>순위</th>
-              <th style={thStyle}>모드</th>
-              <th style={thStyle}>레버리지</th>
-              <th style={thStyle}>익절/손절</th>
-              <th style={thStyle}>거래수</th>
-              <th style={thStyle}>청산/스위칭</th> {/* 추가 */}
-              <th style={thStyle}>평균 MDD</th> {/* 추가 */}
-              <th style={thStyle}>최대 MDD</th> {/* 추가 */}
-              <th style={thStyle}>총 수익 (Net)</th>
+              <th style={thStyle}>Rank</th>
+              <th style={thStyle}>Mode / Lev</th>
+              <th style={thStyle}>TP / SL Ratio</th>
+              <th style={thStyle}>승/패 (청산)</th>
+              <th style={thStyle}>승률</th>
+              <th style={thStyle}>Avg MDD</th>
+              <th style={thStyle}>Max Drawdown</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Total PNL</th>
             </tr>
           </thead>
           <tbody>
             {rankings.length === 0 ? (
               <tr>
-                <td colSpan={9} style={emptyTdStyle}>
-                  데이터가 없습니다.
+                <td colSpan={8} style={emptyTdStyle}>
+                  {loading
+                    ? "데이터를 분석 중입니다..."
+                    : "조건에 맞는 시뮬레이션 데이터가 없습니다."}
                 </td>
               </tr>
             ) : (
-              rankings.map((rank, index) => (
-                <tr key={index} style={index < 3 ? topRankRowStyle : rowStyle}>
-                  <td style={tdStyle}>
-                    {index < 3 ? ["🥇", "🥈", "🥉"][index] : index + 1}
-                  </td>
-                  <td style={tdStyle}>
-                    <span
-                      style={
-                        rank.position_mode === "HEDGE"
-                          ? hedgeBadgeStyle
-                          : oneWayBadgeStyle
-                      }
+              rankings.map((rank, index) => {
+                const winRate =
+                  rank.total_trades > 0
+                    ? ((rank.wins / rank.total_trades) * 100).toFixed(1)
+                    : "0.0";
+
+                return (
+                  <tr
+                    key={index}
+                    style={index < 3 ? topRankRowStyle : rowStyle}
+                  >
+                    <td style={tdStyle}>
+                      {index === 0
+                        ? "🥇"
+                        : index === 1
+                          ? "🥈"
+                          : index === 2
+                            ? "🥉"
+                            : `${index + 1}`}
+                    </td>
+                    <td style={tdStyle}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                        }}
+                      >
+                        <span
+                          style={
+                            rank.position_mode === "HEDGE"
+                              ? hedgeBadgeStyle
+                              : oneWayBadgeStyle
+                          }
+                        >
+                          {rank.position_mode}
+                        </span>
+                        <span style={leverageStyle}>{rank.leverage}x</span>
+                      </div>
+                    </td>
+                    <td style={tdStyle}>
+                      <span style={{ color: "#26a69a", fontWeight: "bold" }}>
+                        {(rank.tp_ratio * 100).toFixed(1)}%
+                      </span>
+                      <span style={{ color: "#848e9c", margin: "0 4px" }}>
+                        /
+                      </span>
+                      <span style={{ color: "#ef5350", fontWeight: "bold" }}>
+                        {(rank.sl_ratio * 100).toFixed(1)}%
+                      </span>
+                    </td>
+                    <td style={tdStyle}>
+                      <span style={{ color: "#26a69a" }}>{rank.wins}</span> /
+                      <span style={{ color: "#848e9c" }}> {rank.losses}</span>
+                      {rank.liquidations > 0 && (
+                        <span
+                          style={{
+                            color: "#ef5350",
+                            fontSize: "0.75rem",
+                            marginLeft: "4px",
+                          }}
+                        >
+                          (청산 {rank.liquidations})
+                        </span>
+                      )}
+                    </td>
+                    <td style={tdStyle}>
+                      <span
+                        style={{
+                          color: Number(winRate) >= 50 ? "#26a69a" : "#d1d4dc",
+                        }}
+                      >
+                        {winRate}%
+                      </span>
+                    </td>
+                    <td
+                      style={{
+                        ...tdStyle,
+                        color: rank.avg_mdd_rate < -20 ? "#ef5350" : "#d1d4dc",
+                      }}
                     >
-                      {rank.position_mode}
-                    </span>
-                  </td>
-                  <td style={tdStyle}>{rank.leverage}x</td>
-                  <td style={tdStyle}>
-                    <span style={{ color: "#26a69a" }}>
-                      {(rank.tp_ratio * 100).toFixed(1)}%
-                    </span>{" "}
-                    /
-                    <span style={{ color: "#ef5350" }}>
-                      {" "}
-                      {(rank.sl_ratio * 100).toFixed(1)}%
-                    </span>
-                  </td>
-                  <td style={tdStyle}>{rank.total_trades}</td>
-
-                  {/* 청산 및 스위칭 횟수 표시 */}
-                  <td style={tdStyle}>
-                    <span style={{ color: "#ef5350" }}>
-                      {rank.liquidations}
-                    </span>{" "}
-                    / {rank.switches}
-                  </td>
-
-                  {/* MDD 지표 표시: 리스크 시각화 */}
-                  <td
-                    style={{
-                      ...tdStyle,
-                      color: rank.avg_mdd_rate < -20 ? "#ef5350" : "#d1d4dc",
-                    }}
-                  >
-                    {rank.avg_mdd_rate.toFixed(2)}%
-                  </td>
-                  <td
-                    style={{
-                      ...tdStyle,
-                      color: rank.max_drawdown < -50 ? "#ef5350" : "#ffa726",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    {rank.max_drawdown.toFixed(2)}%
-                  </td>
-
-                  <td
-                    style={{
-                      ...tdStyle,
-                      color: rank.total_pnl >= 0 ? "#26a69a" : "#ef5350",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    ${rank.total_pnl.toLocaleString()}
-                  </td>
-                </tr>
-              ))
+                      {rank.avg_mdd_rate?.toFixed(2)}%
+                    </td>
+                    <td
+                      style={{
+                        ...tdStyle,
+                        color: rank.max_drawdown < -50 ? "#ef5350" : "#ffa726",
+                        fontWeight: "bold",
+                      }}
+                    >
+                      {rank.max_drawdown?.toFixed(2)}%
+                    </td>
+                    <td
+                      style={{
+                        ...tdStyle,
+                        textAlign: "right",
+                        color: rank.total_pnl >= 0 ? "#26a69a" : "#ef5350",
+                        fontWeight: "bold",
+                        fontSize: "1rem",
+                      }}
+                    >
+                      ${rank.total_pnl.toLocaleString()}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -163,63 +216,87 @@ const SimulationResultsPage: React.FC = () => {
   );
 };
 
-// --- 추가된 스타일 ---
-const filterGroupStyle = {
-  display: "flex",
-  gap: "8px",
-  backgroundColor: "#1e222d",
-  padding: "4px",
-  borderRadius: "6px",
-};
-
-const selectStyle = {
-  backgroundColor: "#2a2e39",
-  color: "#fff",
-  border: "none",
-  padding: "4px 8px",
-  borderRadius: "4px",
-  fontSize: "0.8rem",
-  outline: "none",
-  cursor: "pointer",
-};
-
-// --- [ 스타일 정의 ] ---
+// --- [ 세련된 스타일 정의 ] ---
 const pageContainerStyle: React.CSSProperties = {
-  padding: "0 24px 24px 24px",
+  padding: "24px",
   backgroundColor: "#0b0e14",
   flex: 1,
+  color: "#d1d4dc",
+  minHeight: "100vh",
 };
 
-const headerContainerStyle: React.CSSProperties = {
+const headerCardStyle: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "center",
-  margin: "20px 0",
+  backgroundColor: "#131722",
+  padding: "20px 24px",
+  borderRadius: "12px",
+  border: "1px solid #2a2e39",
+  marginBottom: "24px",
+  boxShadow: "0 4px 6px rgba(0, 0, 0, 0.3)",
 };
 
 const titleStyle: React.CSSProperties = {
-  color: "#d1d4dc",
   margin: 0,
-  fontSize: "1.1rem",
+  fontSize: "1.4rem",
+  color: "#fff",
+};
+const subtitleStyle: React.CSSProperties = {
+  margin: "6px 0 0 0",
+  fontSize: "0.85rem",
+  color: "#848e9c",
+};
+
+const controlsContainerStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "16px",
+};
+
+const filterGroupStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  backgroundColor: "#1e222d",
+  padding: "6px 12px",
+  borderRadius: "8px",
+  border: "1px solid #2a2e39",
+};
+
+const labelStyle: React.CSSProperties = {
+  fontSize: "0.8rem",
+  color: "#848e9c",
+  fontWeight: "bold",
+};
+
+const selectStyle: React.CSSProperties = {
+  backgroundColor: "transparent",
+  color: "#fff",
+  border: "none",
+  outline: "none",
+  cursor: "pointer",
+  fontSize: "0.9rem",
+  fontWeight: 600,
 };
 
 const tableWrapperStyle: React.CSSProperties = {
   backgroundColor: "#131722",
-  borderRadius: "8px",
+  borderRadius: "12px",
   border: "1px solid #2a2e39",
   overflow: "hidden",
+  boxShadow: "0 4px 6px rgba(0, 0, 0, 0.3)",
 };
 
 const tableStyle: React.CSSProperties = {
   width: "100%",
   borderCollapse: "collapse",
-  fontSize: "0.85rem",
-  color: "#d1d4dc",
+  fontSize: "0.9rem",
 };
 
 const thStyle: React.CSSProperties = {
-  backgroundColor: "#1e222d",
-  padding: "12px 15px",
+  backgroundColor: "#181a20",
+  padding: "16px",
   textAlign: "left",
   borderBottom: "1px solid #2a2e39",
   color: "#848e9c",
@@ -227,51 +304,70 @@ const thStyle: React.CSSProperties = {
 };
 
 const tdStyle: React.CSSProperties = {
-  padding: "12px 15px",
+  padding: "16px",
   borderBottom: "1px solid #2a2e39",
+  verticalAlign: "middle",
 };
 
 const rowStyle: React.CSSProperties = { transition: "background-color 0.2s" };
 const topRankRowStyle: React.CSSProperties = {
   ...rowStyle,
-  backgroundColor: "rgba(41, 98, 255, 0.05)",
+  backgroundColor: "rgba(41, 98, 255, 0.08)", // 상위 랭크 하이라이트
 };
 
 const emptyTdStyle: React.CSSProperties = {
-  padding: "40px",
+  padding: "60px",
   textAlign: "center",
-  color: "#555",
+  color: "#848e9c",
+  fontSize: "1rem",
 };
 
-const badgeStyle = {
-  padding: "2px 6px",
-  borderRadius: "4px",
-  fontSize: "0.7rem",
+const badgeStyle: React.CSSProperties = {
+  padding: "4px 8px",
+  borderRadius: "6px",
+  fontSize: "0.75rem",
   fontWeight: "bold",
+  letterSpacing: "0.5px",
 };
+
 const hedgeBadgeStyle = {
   ...badgeStyle,
-  backgroundColor: "rgba(255, 167, 38, 0.1)",
+  backgroundColor: "rgba(255, 167, 38, 0.15)",
   color: "#ffa726",
+  border: "1px solid rgba(255, 167, 38, 0.3)",
 };
 const oneWayBadgeStyle = {
   ...badgeStyle,
-  backgroundColor: "rgba(41, 98, 255, 0.1)",
+  backgroundColor: "rgba(41, 98, 255, 0.15)",
   color: "#2962FF",
+  border: "1px solid rgba(41, 98, 255, 0.3)",
 };
 
-const refreshBtnStyle = {
+const leverageStyle: React.CSSProperties = {
+  backgroundColor: "#2a2e39",
+  padding: "4px 8px",
+  borderRadius: "6px",
+  fontSize: "0.75rem",
+  fontWeight: "bold",
+  color: "#d1d4dc",
+};
+
+const refreshBtnStyle: React.CSSProperties = {
   backgroundColor: "#2962FF",
   color: "#fff",
   border: "none",
-  padding: "8px 16px",
-  borderRadius: "4px",
+  padding: "10px 20px",
+  borderRadius: "8px",
   cursor: "pointer",
-  fontSize: "0.85rem",
+  fontSize: "0.9rem",
+  fontWeight: "bold",
+  transition: "background-color 0.2s",
 };
+
 const disabledBtnStyle = {
   ...refreshBtnStyle,
-  backgroundColor: "#555",
+  backgroundColor: "#2a2e39",
+  color: "#848e9c",
   cursor: "not-allowed",
 };
 

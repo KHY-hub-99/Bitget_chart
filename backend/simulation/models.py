@@ -7,7 +7,6 @@ class PositionSide(str, Enum):
     LONG = "LONG"
     SHORT = "SHORT"
 
-# 모드 구분을 위한 Enum 추가
 class PositionMode(str, Enum):
     ONE_WAY = "ONE_WAY"
     HEDGE = "HEDGE"
@@ -28,28 +27,47 @@ class Position(BaseModel):
     take_profit_price: Optional[Decimal] = Field(default=None, description="목표 익절가")
     stop_loss_price: Optional[Decimal] = Field(default=None, description="목표 손절가")
     
-    def update_pnl(self, current_price: Decimal):
+    # 수정 1 & 2: 엔진에서 수수료와 슬리피지 비율을 주입받고, 종료 시점의 불리한 가격을 반영
+    def update_pnl(self, current_price: Decimal, fee_rate: Decimal = Decimal('0.0005'), slippage_rate: Decimal = Decimal('0.0002')):
         self.mark_price = current_price
-        if self.size == Decimal('0.0'):
-            self.unrealized_pnl = Decimal('0.0')
-            return
+        
+        # 1. 시장가 종료를 가정하여 슬리피지를 적용한 '예상 체결가' 계산
         if self.side == PositionSide.LONG:
-            self.unrealized_pnl = (current_price - self.entry_price) * self.size
+            estimated_exit_price = current_price * (Decimal('1') - slippage_rate)
         else:
-            self.unrealized_pnl = (self.entry_price - current_price) * self.size
+            estimated_exit_price = current_price * (Decimal('1') + slippage_rate)
+            
+        # 2. 예상 수수료 계산 (진입 노미널 + 종료 예상 노미널)
+        estimated_fee = (self.entry_price * self.size + estimated_exit_price * self.size) * fee_rate
+        
+        # 3. 총수익(Gross) 계산
+        if self.side == PositionSide.LONG:
+            gross_pnl = (estimated_exit_price - self.entry_price) * self.size
+        else:
+            gross_pnl = (self.entry_price - estimated_exit_price) * self.size
+            
+        # 4. 순수익(Net) 반영
+        self.unrealized_pnl = gross_pnl - estimated_fee 
             
 class Wallet(BaseModel):
     """
     사용자 지갑 상태 모델
     """
     initial_balance: Decimal = Field(default=Decimal('10000.0'), description="초기 자본금")
-    total_balance: Decimal = Field(default=Decimal('10000.0'), description="총 자산")
+    total_balance: Decimal = Field(default=Decimal('10000.0'), description="총 자산 (실현된 잔고)")
     available_balance: Decimal = Field(default=Decimal('10000.0'), description="주문 가능 잔액")
     frozen_margin: Decimal = Field(default=Decimal('0.0'), description="사용 중인 증거금")
     
     position_mode: PositionMode = Field(default=PositionMode.ONE_WAY, description="포지션 모드")
     
     positions: Dict[str, Position] = Field(default_factory=dict, description="활성화된 포지션 목록")
+    
+    # 수정 3: 프론트엔드 대시보드 표시용 '순자산(Equity)' 동적 계산 속성 추가
+    @property
+    def equity(self) -> Decimal:
+        """총 자산 가치(Equity) = 지갑 잔고 + 총 미실현 손익"""
+        total_unrealized = sum(pos.unrealized_pnl for pos in self.positions.values())
+        return self.total_balance + total_unrealized
     
     def sync_balances(self):
         """지갑 잔액 동기화"""

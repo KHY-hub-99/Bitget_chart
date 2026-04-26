@@ -149,8 +149,13 @@ export interface StrategyRank {
 
 export const analysisApi = {
   // 1. 전략 랭킹 가져오기
-  getRanking: async (): Promise<StrategyRank[]> => {
-    const response = await axios.get(`${API_BASE}/api/strategy-ranking`);
+  getRanking: async (
+    symbol: string = "ALL",
+    timeframe: string = "ALL",
+  ): Promise<StrategyRank[]> => {
+    const response = await axios.get(`${API_BASE}/api/strategy-ranking`, {
+      params: { symbol, timeframe }, // axios params로 전달
+    });
     return response.data.data;
   },
 

@@ -130,7 +130,7 @@ class SimulationEngine:
             if pos.symbol != symbol:
                 continue
             
-            pos.update_pnl(current_price)
+            pos.update_pnl(current_price, fee_rate=self.fee_rate, slippage_rate=self.slippage_rate)
 
             # 1. 강제 청산 체크
             is_liquidated = (pos.side == PositionSide.LONG and current_price <= pos.liquidation_price) or \
