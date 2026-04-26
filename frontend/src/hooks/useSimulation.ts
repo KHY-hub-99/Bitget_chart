@@ -44,11 +44,11 @@ export const useSimulation = (symbol: string) => {
   };
 
   // 3. 포지션 시장가 종료 (Market Close)
-  const closeMarketPosition = async () => {
+  const closeMarketPosition = async (targetKey: string = symbol) => {
     setLoading(true);
     try {
-      await simulationApi.closePosition(symbol);
-      await refreshStatus(); // 종료 후 잔고 정산 반영
+      await simulationApi.closePosition(targetKey);
+      await refreshStatus();
     } catch (error: any) {
       alert(error.response?.data?.detail || "포지션 종료 실패");
     } finally {
@@ -100,11 +100,13 @@ export const useSimulation = (symbol: string) => {
     refreshStatus();
   }, [refreshStatus]);
 
-  // 현재 이 심볼에 대한 포지션만 추출하여 메모이제이션
-  const currentPosition = useMemo(
-    () => status?.positions[symbol] || null,
-    [status, symbol],
-  );
+  // 양방향 모드일 경우 키가 달라질 수 있으므로, 값(Object.values)을 뒤져서 심볼이 같은 포지션을 찾습니다.
+  const currentPosition = useMemo(() => {
+    if (!status) return null;
+    return (
+      Object.values(status.positions).find((p) => p.symbol === symbol) || null
+    );
+  }, [status, symbol]);
 
   return {
     status, // 전체 지갑 상태 (잔고 등)

@@ -4,9 +4,9 @@ import { SimulationStatus } from "../api";
 
 interface PositionBoardProps {
   currentPrice: number;
-  activeSymbol: string; // 🆕 현재 차트의 심볼을 받아오면 더 정확한 처리가 가능합니다.
+  activeSymbol: string;
   status: SimulationStatus | null;
-  closeMarketPosition: () => Promise<void>;
+  closeMarketPosition: (key?: string) => Promise<void>; // 🆕 파라미터 타입 추가
 }
 
 export const PositionBoard: React.FC<PositionBoardProps> = ({
@@ -75,16 +75,14 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
               </td>
             </tr>
           ) : (
-            positions.map(([symbol, pos]) => {
+            positions.map(([positionKey, pos]) => {
               const isLong = pos.side === "LONG";
               const sideColor = isLong ? "#00b561" : "#ff4c4c";
 
               // 🌟 시장 가격 결정 로직 🌟
-              // 1. 백엔드에서 준 mark_price가 있으면 그것을 사용
-              // 2. 만약 현재 차트 심볼과 포지션 심볼이 같다면 실시간 currentPrice 사용
-              // 3. 둘 다 아니면 진입가 유지 (가격 꼬임 방지)
+              // 🎯 3. positionKey가 아닌 포지션 객체 안의 진짜 'pos.symbol'을 비교합니다!
               const markPrice =
-                symbol === activeSymbol && currentPrice > 0
+                pos.symbol === activeSymbol && currentPrice > 0
                   ? currentPrice
                   : pos.mark_price && pos.mark_price !== 0
                     ? pos.mark_price
@@ -98,9 +96,10 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
               const roe = (unrealizedPnl / (pos.isolated_margin || 1)) * 100;
               const pnlColor = unrealizedPnl >= 0 ? "#00b561" : "#ff4c4c";
 
+              // 🎯 4. tr의 key도 positionKey로 적용
               return (
-                <tr key={symbol} style={styles.tdRow}>
-                  {/* 1. 계약 (Symbol) */}
+                <tr key={positionKey} style={styles.tdRow}>
+                  {/* 1. 계약 (Symbol) - pos.symbol 출력 */}
                   <td style={styles.td}>
                     <span
                       style={{
@@ -112,7 +111,7 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                       {pos.side}
                     </span>
                     <span style={{ color: "#eaecef", fontWeight: "bold" }}>
-                      {symbol}
+                      {pos.symbol}
                     </span>
                     <span style={styles.leverageBadge}>{pos.leverage}x</span>
                   </td>
@@ -183,8 +182,9 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
 
                   {/* 9. 종료 (Close) */}
                   <td style={styles.td}>
+                    {/* 🎯 5. 종료 함수에 백엔드로 보낼 고유 키(positionKey)를 전달! */}
                     <button
-                      onClick={() => closeMarketPosition()}
+                      onClick={() => closeMarketPosition(positionKey)}
                       className="close-btn"
                       style={styles.closeBtn}
                     >

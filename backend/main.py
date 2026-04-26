@@ -186,12 +186,8 @@ async def get_simulation_status():
 
 @app.post("/api/simulation/order")
 async def place_market_order(req: OrderRequest):
-    """시장가 주문 체결"""
     if req.margin > sim_wallet.available_balance:
         raise HTTPException(status_code=400, detail="주문 가능 잔액이 부족합니다.")
-    
-    if req.symbol in sim_wallet.positions:
-        raise HTTPException(status_code=400, detail="이미 해당 코인의 포지션이 존재합니다.")
 
     sim_engine.open_position(
         wallet=sim_wallet,
@@ -218,16 +214,16 @@ async def close_position(symbol: str = Query(...)):
 
 @app.post("/api/simulation/tick")
 async def process_price_tick(req: TickRequest):
-    if req.symbol in sim_wallet.positions:
-        pos = sim_wallet.positions[req.symbol]
-        pos.update_pnl(Decimal(str(req.current_price)))
-
+    for pos_key, pos in list(sim_wallet.positions.items()):
+        if pos.symbol == req.symbol:
+            pos.update_pnl(Decimal(str(req.current_price)))
+            
     result = sim_engine.check_triggers(sim_wallet, req.symbol, req.current_price)
     sim_wallet.sync_balances()
 
     return {
         "tick_result": result,
-        "wallet": serialize_wallet(sim_wallet)  # 헬퍼 함수를 통해 무조건 숫자로 반환되도록 보장
+        "wallet": serialize_wallet(sim_wallet)
     }
 
 @app.post("/api/simulation/reset")

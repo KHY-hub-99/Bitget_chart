@@ -153,24 +153,24 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
       <div style={styles.btnRow}>
         <button
           onClick={() => openConfirmModal("LONG")}
-          disabled={loading || !!currentPosition}
+          disabled={loading} // [수정] || !!currentPosition 삭제
           style={{
             ...styles.actionBtn,
             backgroundColor: "#00b561",
-            opacity: loading || !!currentPosition ? 0.5 : 1,
-            cursor: loading || !!currentPosition ? "not-allowed" : "pointer",
+            opacity: loading ? 0.5 : 1, // [수정] || !!currentPosition 조건 삭제
+            cursor: loading ? "not-allowed" : "pointer",
           }}
         >
           {loading ? "..." : "Buy / Long"}
         </button>
         <button
           onClick={() => openConfirmModal("SHORT")}
-          disabled={loading || !!currentPosition}
+          disabled={loading} // [수정] || !!currentPosition 삭제
           style={{
             ...styles.actionBtn,
             backgroundColor: "#eb4d4b",
-            opacity: loading || !!currentPosition ? 0.5 : 1,
-            cursor: loading || !!currentPosition ? "not-allowed" : "pointer",
+            opacity: loading ? 0.5 : 1, // [수정] || !!currentPosition 조건 삭제
+            cursor: loading ? "not-allowed" : "pointer",
           }}
         >
           {loading ? "..." : "Sell / Short"}

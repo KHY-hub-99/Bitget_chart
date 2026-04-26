@@ -128,7 +128,7 @@ function App() {
     setTimeframe(inputTimeframe);
   };
 
-  const currentPosition = sim.status?.positions?.[symbol] || null;
+  const currentPosition = sim.currentPosition;
 
   return (
     <div
