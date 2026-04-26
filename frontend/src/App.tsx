@@ -254,9 +254,9 @@ function App() {
                 className="position-section"
                 style={{ flex: 1.5, borderRight: "1px solid #2a2e39" }}
               >
-                {/* 🆕 포지션 보드에 상태와 종료 함수 연결 */}
                 <PositionBoard
                   currentPrice={currentPrice}
+                  activeSymbol={symbol} // 이 줄을 반드시 추가해야 합니다.
                   status={sim.status}
                   closeMarketPosition={sim.closeMarketPosition}
                 />

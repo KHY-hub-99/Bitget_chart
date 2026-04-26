@@ -127,6 +127,28 @@ async def continuous_data_sync_worker():
 
         # 15초 대기 후 다시 처음부터 수집 시작
         await asyncio.sleep(15)
+        
+def serialize_wallet(wallet: Wallet):
+    return {
+        "total_balance": float(wallet.total_balance),
+        "available_balance": float(wallet.available_balance),
+        "frozen_margin": float(wallet.frozen_margin),
+        "positions": {
+            sym: {
+                "side": p.side,
+                "leverage": p.leverage,
+                "entry_price": float(p.entry_price),
+                "size": float(p.size),
+                "mark_price": float(p.mark_price),
+                "isolated_margin": float(p.isolated_margin),
+                "liquidation_price": float(p.liquidation_price),
+                "unrealized_pnl": float(p.unrealized_pnl),
+                "take_profit": float(p.take_profit_price) if p.take_profit_price else None,
+                "stop_loss": float(p.stop_loss_price) if p.stop_loss_price else None
+            }
+            for sym, p in wallet.positions.items()
+        }
+    }
 
 # Lifespan: 서버 가동 시 상태 메시지 출력
 @asynccontextmanager
@@ -160,26 +182,7 @@ app.add_middleware(
 # --- [4. 시뮬레이션 API 엔드포인트 (통합)] ---
 @app.get("/api/simulation/status")
 async def get_simulation_status():
-    """현재 지갑 잔고와 포지션 상태를 조회"""
-    return {
-        "total_balance": float(sim_wallet.total_balance),
-        "available_balance": float(sim_wallet.available_balance),
-        "frozen_margin": float(sim_wallet.frozen_margin),
-        "positions": {
-            symbol: {
-                "side": pos.side,
-                "leverage": pos.leverage,
-                "entry_price": float(pos.entry_price),
-                "size": float(pos.size),
-                "isolated_margin": float(pos.isolated_margin),
-                "liquidation_price": float(pos.liquidation_price),
-                "unrealized_pnl": float(pos.unrealized_pnl),
-                "take_profit": float(pos.take_profit_price) if pos.take_profit_price else None,
-                "stop_loss": float(pos.stop_loss_price) if pos.stop_loss_price else None
-            }
-            for symbol, pos in sim_wallet.positions.items()
-        }
-    }
+    return serialize_wallet(sim_wallet)
 
 @app.post("/api/simulation/order")
 async def place_market_order(req: OrderRequest):
@@ -215,24 +218,16 @@ async def close_position(symbol: str = Query(...)):
 
 @app.post("/api/simulation/tick")
 async def process_price_tick(req: TickRequest):
-    """가격 변동 시 PNL 업데이트 및 청산/익절/손절 감시"""
-    
-    # 1. 해당 심볼의 포지션이 있다면 실시간 PNL 및 시장가(Mark Price) 업데이트
     if req.symbol in sim_wallet.positions:
         pos = sim_wallet.positions[req.symbol]
-        # 이전에 만든 모델의 update_pnl 함수 호출 (self.mark_price 갱신 포함)
         pos.update_pnl(Decimal(str(req.current_price)))
 
-    # 2. 청산/익절/손절 트리거 감시 (기존 로직)
     result = sim_engine.check_triggers(sim_wallet, req.symbol, req.current_price)
-    
-    # 3. 지갑 잔액 동기화 (Margin 및 Available Balance 재계산)
     sim_wallet.sync_balances()
 
-    # 4. 업데이트된 지갑 상태(wallet)를 결과와 함께 반환
     return {
         "tick_result": result,
-        "wallet": sim_wallet  # 이제 프론트엔드가 이 데이터를 받아 화면을 갱신함
+        "wallet": serialize_wallet(sim_wallet)  # 헬퍼 함수를 통해 무조건 숫자로 반환되도록 보장
     }
 
 @app.post("/api/simulation/reset")
