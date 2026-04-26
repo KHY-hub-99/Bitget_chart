@@ -5,10 +5,15 @@ const SimulationResultsPage: React.FC = () => {
   const [rankings, setRankings] = useState<StrategyRank[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
-  // 1. 데이터 로드 함수
+  // 필터 상태 추가
+  const [symbol, setSymbol] = useState<string>("BTCUSDT");
+  const [timeframe, setTimeframe] = useState<string>("15m");
+
   const loadRankings = async () => {
     setLoading(true);
     try {
+      // 백엔드 API가 파라미터를 지원하도록 수정되었다면 전달,
+      // 아니라면 전체를 가져와서 프론트에서 필터링 가능
       const data = await analysisApi.getRanking();
       setRankings(data);
     } catch (error) {
@@ -18,7 +23,6 @@ const SimulationResultsPage: React.FC = () => {
     }
   };
 
-  // 2. 컴포넌트 마운트 시 데이터 로드
   useEffect(() => {
     loadRankings();
   }, []);
@@ -26,13 +30,38 @@ const SimulationResultsPage: React.FC = () => {
   return (
     <div style={pageContainerStyle}>
       <div style={headerContainerStyle}>
-        <h3 style={titleStyle}>전략별 수익성 랭킹 (Best Configurations)</h3>
+        <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+          <h3 style={titleStyle}>전략 성과 랭킹</h3>
+
+          {/* 심볼/타임프레임 선택기 추가 */}
+          <div style={filterGroupStyle}>
+            <select
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="BTCUSDT">BTCUSDT</option>
+              <option value="ETHUSDT">ETHUSDT</option>
+            </select>
+            <select
+              value={timeframe}
+              onChange={(e) => setTimeframe(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="1m">1m</option>
+              <option value="5m">5m</option>
+              <option value="15m">15m</option>
+              <option value="1h">1h</option>
+            </select>
+          </div>
+        </div>
+
         <button
           onClick={loadRankings}
           disabled={loading}
           style={loading ? disabledBtnStyle : refreshBtnStyle}
         >
-          {loading ? "데이터 갱신 중..." : "새로고침"}
+          {loading ? "갱신 중..." : "새로고침"}
         </button>
       </div>
 
@@ -44,32 +73,25 @@ const SimulationResultsPage: React.FC = () => {
               <th style={thStyle}>모드</th>
               <th style={thStyle}>레버리지</th>
               <th style={thStyle}>익절/손절</th>
-              <th style={thStyle}>총 거래</th>
-              <th style={thStyle}>승률</th>
-              <th style={thStyle}>불타기 합계</th>
-              <th style={thStyle}>총 수익 (PNL)</th>
+              <th style={thStyle}>거래수</th>
+              <th style={thStyle}>청산/스위칭</th> {/* 추가 */}
+              <th style={thStyle}>평균 MDD</th> {/* 추가 */}
+              <th style={thStyle}>최대 MDD</th> {/* 추가 */}
+              <th style={thStyle}>총 수익 (Net)</th>
             </tr>
           </thead>
           <tbody>
             {rankings.length === 0 ? (
               <tr>
-                <td colSpan={8} style={emptyTdStyle}>
-                  {loading
-                    ? "데이터를 불러오는 중입니다..."
-                    : "데이터가 없습니다. 시뮬레이션을 먼저 실행해 주세요."}
+                <td colSpan={9} style={emptyTdStyle}>
+                  데이터가 없습니다.
                 </td>
               </tr>
             ) : (
               rankings.map((rank, index) => (
                 <tr key={index} style={index < 3 ? topRankRowStyle : rowStyle}>
                   <td style={tdStyle}>
-                    {index === 0
-                      ? "🥇"
-                      : index === 1
-                        ? "🥈"
-                        : index === 2
-                          ? "🥉"
-                          : index + 1}
+                    {index < 3 ? ["🥇", "🥈", "🥉"][index] : index + 1}
                   </td>
                   <td style={tdStyle}>
                     <span
@@ -94,8 +116,34 @@ const SimulationResultsPage: React.FC = () => {
                     </span>
                   </td>
                   <td style={tdStyle}>{rank.total_trades}</td>
-                  <td style={tdStyle}>{rank.win_rate}%</td>
-                  <td style={tdStyle}>{rank.total_pyramid_count}회</td>
+
+                  {/* 청산 및 스위칭 횟수 표시 */}
+                  <td style={tdStyle}>
+                    <span style={{ color: "#ef5350" }}>
+                      {rank.liquidations}
+                    </span>{" "}
+                    / {rank.switches}
+                  </td>
+
+                  {/* MDD 지표 표시: 리스크 시각화 */}
+                  <td
+                    style={{
+                      ...tdStyle,
+                      color: rank.avg_mdd_rate < -20 ? "#ef5350" : "#d1d4dc",
+                    }}
+                  >
+                    {rank.avg_mdd_rate.toFixed(2)}%
+                  </td>
+                  <td
+                    style={{
+                      ...tdStyle,
+                      color: rank.max_drawdown < -50 ? "#ef5350" : "#ffa726",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {rank.max_drawdown.toFixed(2)}%
+                  </td>
+
                   <td
                     style={{
                       ...tdStyle,
@@ -113,6 +161,26 @@ const SimulationResultsPage: React.FC = () => {
       </div>
     </div>
   );
+};
+
+// --- 추가된 스타일 ---
+const filterGroupStyle = {
+  display: "flex",
+  gap: "8px",
+  backgroundColor: "#1e222d",
+  padding: "4px",
+  borderRadius: "6px",
+};
+
+const selectStyle = {
+  backgroundColor: "#2a2e39",
+  color: "#fff",
+  border: "none",
+  padding: "4px 8px",
+  borderRadius: "4px",
+  fontSize: "0.8rem",
+  outline: "none",
+  cursor: "pointer",
 };
 
 // --- [ 스타일 정의 ] ---

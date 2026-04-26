@@ -137,11 +137,14 @@ export interface StrategyRank {
   total_trades: number;
   wins: number;
   losses: number;
-  timeouts: number;
+  liquidations: number; // 추가
+  switches: number; // 추가
   total_pnl: number;
   avg_pnl: number;
-  win_rate: number;
   total_pyramid_count: number;
+  avg_mdd_rate: number; // 추가
+  max_drawdown: number; // 추가
+  win_rate?: string; // 백엔드에서 계산해서 주거나 프론트에서 계산
 }
 
 export const analysisApi = {
