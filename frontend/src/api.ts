@@ -103,8 +103,9 @@ export const simulationApi = {
 
   // 4. 틱 검사 (청산/TP/SL 확인)
   processTick: async (symbol: string, currentPrice: number) => {
-    const response = await axios.post(`${API_BASE}/api/simulation/tick`, null, {
-      params: { symbol, current_price: currentPrice },
+    const response = await axios.post(`${API_BASE}/api/simulation/tick`, {
+      symbol: symbol,
+      current_price: currentPrice,
     });
     return response.data;
   },
