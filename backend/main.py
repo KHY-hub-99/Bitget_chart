@@ -202,6 +202,17 @@ async def place_market_order(req: OrderRequest):
     )
     return {"message": "주문 체결 성공", "status": "success"}
 
+@app.post("/api/simulation/close")
+async def close_position(symbol: str = Query(...)):
+    """특정 코인의 포지션을 현재가로 즉시 종료"""
+    if symbol not in sim_wallet.positions:
+        raise HTTPException(status_code=400, detail="종료할 포지션이 없습니다.")
+    pos = sim_wallet.positions.pop(symbol)
+    sim_wallet.total_balance += pos.unrealized_pnl
+    sim_wallet.sync_balances()
+    
+    return {"message": f"{symbol} 포지션이 종료되었습니다."}
+
 @app.post("/api/simulation/tick")
 async def process_price_tick(req: TickRequest):
     """가격 변동 시 청산/익절/손절 감시"""
@@ -280,11 +291,11 @@ async def get_history(
     return convert_df_to_chart_data(chart_df)
 
 # WebSocket: 실시간 데이터 동기화
-@app.websocket("/ws/chart")
+@app.websocket("/ws/chart/{symbol}/{timeframe}")
 async def websocket_endpoint(
     websocket: WebSocket,
-    symbol: str = "BTCUSDT",
-    timeframe: str = "15m"
+    symbol: str,
+    timeframe: str
 ):
     await websocket.accept()
     # 새로운 심볼로 피드 생성

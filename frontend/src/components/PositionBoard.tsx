@@ -1,16 +1,26 @@
 import React from "react";
-import { useSimulation } from "../hooks/useSimulation";
+// api.ts에서 정의한 타입을 가져옵니다 (경로 확인 필요)
+import { SimulationStatus } from "../api";
 
 interface PositionBoardProps {
   currentPrice: number;
+  status: SimulationStatus | null; // 부모로부터 지갑 상태를 받음
+  closeMarketPosition: () => Promise<void>; // 부모로부터 종료 함수를 받음
 }
 
 export const PositionBoard: React.FC<PositionBoardProps> = ({
   currentPrice,
+  status,
+  closeMarketPosition,
 }) => {
-  const { status } = useSimulation("BTC/USDT");
+  // ❌ 내부 useSimulation 호출 삭제 (부모에서 넘겨받은 Props 사용)
 
-  if (!status) return null;
+  if (!status)
+    return (
+      <div style={styles.container}>
+        <div style={styles.empty}>지갑 정보를 불러오는 중...</div>
+      </div>
+    );
 
   const positions = Object.entries(status.positions);
 
@@ -22,14 +32,20 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
           <span>
             총 자산:{" "}
             <strong style={{ color: "#eaecef" }}>
-              {status.total_balance.toFixed(2)} USDT
+              {(status.total_balance ?? 0).toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+              })}{" "}
+              USDT
             </strong>
           </span>
           <span style={{ margin: "0 10px", color: "#444" }}>|</span>
           <span>
             묶인 증거금:{" "}
             <strong style={{ color: "#ff9800" }}>
-              {status.frozen_margin.toFixed(2)} USDT
+              {(status.frozen_margin ?? 0).toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+              })}{" "}
+              USDT
             </strong>
           </span>
         </div>
@@ -46,12 +62,13 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
             <th style={styles.th}>격리 증거금 (Margin)</th>
             <th style={styles.th}>TP / SL</th>
             <th style={styles.th}>미실현 손익 (ROE%)</th>
+            <th style={styles.th}>종료 (Close)</th>
           </tr>
         </thead>
         <tbody>
           {positions.length === 0 ? (
             <tr>
-              <td colSpan={8} style={styles.empty}>
+              <td colSpan={9} style={styles.empty}>
                 현재 활성화된 포지션이 없습니다.
               </td>
             </tr>
@@ -60,8 +77,9 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
               const isLong = pos.side === "LONG";
               const sideColor = isLong ? "#00b561" : "#ff4c4c";
 
-              // ROE(수익률) 계산: (미실현 손익 / 격리 증거금) * 100
-              const roe = (pos.unrealized_pnl / pos.isolated_margin) * 100;
+              // ROE 및 PNL 계산
+              const roe =
+                (pos.unrealized_pnl / (pos.isolated_margin || 1)) * 100;
               const pnlColor = pos.unrealized_pnl >= 0 ? "#00b561" : "#ff4c4c";
 
               return (
@@ -115,12 +133,22 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                       fontWeight: "bold",
                     }}
                   >
-                    {pos.unrealized_pnl > 0 ? "+" : ""}
-                    {pos.unrealized_pnl.toFixed(2)} USDT
-                    <span style={{ fontSize: "12px", marginLeft: "4px" }}>
+                    <div style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
+                      {pos.unrealized_pnl > 0 ? "+" : ""}
+                      {pos.unrealized_pnl.toFixed(2)} USDT
+                    </div>
+                    <div style={{ fontSize: "11px", opacity: 0.8 }}>
                       ({roe > 0 ? "+" : ""}
                       {roe.toFixed(2)}%)
-                    </span>
+                    </div>
+                  </td>
+                  <td style={styles.td}>
+                    <button
+                      onClick={() => closeMarketPosition()}
+                      style={styles.closeBtn}
+                    >
+                      Market Close
+                    </button>
                   </td>
                 </tr>
               );
@@ -132,7 +160,7 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
   );
 };
 
-// 다크 테마 기반 인라인 스타일
+// --- [스타일 설정은 기존과 동일] ---
 const styles: { [key: string]: React.CSSProperties } = {
   container: {
     backgroundColor: "#1e2026",
@@ -150,17 +178,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: "16px",
     color: "#eaecef",
   },
-  walletInfo: {
-    fontSize: "14px",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-    textAlign: "right",
-  },
-  thRow: {
-    borderBottom: "1px solid #2b3139",
-  },
+  walletInfo: { fontSize: "14px" },
+  table: { width: "100%", borderCollapse: "collapse", textAlign: "right" },
+  thRow: { borderBottom: "1px solid #2b3139" },
   th: {
     padding: "12px 8px",
     fontSize: "12px",
@@ -172,11 +192,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderBottom: "1px solid #2b3139",
     transition: "background-color 0.2s",
   },
-  td: {
-    padding: "12px 8px",
-    fontSize: "14px",
-    color: "#eaecef",
-  },
+  td: { padding: "12px 8px", fontSize: "14px", color: "#eaecef" },
   leverageBadge: {
     backgroundColor: "#2b3139",
     color: "#fcd535",
@@ -185,9 +201,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: "11px",
     marginLeft: "8px",
   },
-  empty: {
-    textAlign: "center",
-    padding: "40px",
-    color: "#848e9c",
+  empty: { textAlign: "center", padding: "40px", color: "#848e9c" },
+  closeBtn: {
+    padding: "6px 10px",
+    backgroundColor: "#2b3139",
+    color: "#eaecef",
+    border: "1px solid #474d57",
+    borderRadius: "4px",
+    cursor: "pointer",
+    fontSize: "12px",
+    fontWeight: "bold",
   },
 };

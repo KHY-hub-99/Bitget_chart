@@ -1,15 +1,29 @@
 import React, { useState, useMemo } from "react";
-import { useSimulation } from "../hooks/useSimulation";
 
+// Props 인터페이스 정의 (App.tsx에서 넘겨줄 데이터들)
 interface OrderPanelProps {
   currentPrice: number;
+  placeMarketOrder: (
+    side: "LONG" | "SHORT",
+    leverage: number,
+    margin: number,
+    currentPrice: number,
+    tp?: number,
+    sl?: number,
+  ) => Promise<void>;
+  loading: boolean;
+  currentPosition: any;
+  availableBalance: number;
 }
 
-export const OrderPanel: React.FC<OrderPanelProps> = ({ currentPrice }) => {
-  const { status, placeMarketOrder, loading, currentPosition } =
-    useSimulation("BTCUSDT");
-
-  // --- [상태 관리] ---
+export const OrderPanel: React.FC<OrderPanelProps> = ({
+  currentPrice,
+  placeMarketOrder,
+  loading,
+  currentPosition,
+  availableBalance = 0, // 🆕 기본값 0 설정 (undefined 방지)
+}) => {
+  // --- [로컬 상태 관리: 입력값들] ---
   const [leverage, setLeverage] = useState<number>(10);
   const [margin, setMargin] = useState<number | "">("");
   const [tpPrice, setTpPrice] = useState<number | "">("");
@@ -19,34 +33,41 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ currentPrice }) => {
   const [showModal, setShowModal] = useState(false);
   const [side, setSide] = useState<"LONG" | "SHORT">("LONG");
 
-  const availableBalance = status ? status.available_balance : 0;
-
   // --- [계산 로직] ---
   const size = useMemo(() => {
     if (!margin || !currentPrice) return 0;
     return (Number(margin) * leverage) / currentPrice;
   }, [margin, leverage, currentPrice]);
 
-  // --- [함수] ---
+  // --- [핸들러 함수] ---
   const openConfirmModal = (selectedSide: "LONG" | "SHORT") => {
-    if (!margin || Number(margin) <= 0) return alert("증거금을 입력해주세요.");
+    if (!margin || Number(margin) <= 0) {
+      return alert("증거금을 입력해주세요.");
+    }
+    if (Number(margin) > availableBalance) {
+      return alert("잔액이 부족합니다.");
+    }
     setSide(selectedSide);
     setShowModal(true);
   };
 
   const handleFinalConfirm = async () => {
-    await placeMarketOrder(
-      side,
-      leverage,
-      Number(margin),
-      currentPrice,
-      tpPrice ? Number(tpPrice) : undefined,
-      slPrice ? Number(slPrice) : undefined,
-    );
-    setShowModal(false); // 주문 후 모달 닫기
-    setMargin("");
-    setTpPrice("");
-    setSlPrice(""); // 입력창 초기화
+    try {
+      await placeMarketOrder(
+        side,
+        leverage,
+        Number(margin),
+        currentPrice,
+        tpPrice ? Number(tpPrice) : undefined,
+        slPrice ? Number(slPrice) : undefined,
+      );
+      setShowModal(false); // 주문 성공 시 모달 닫기
+      setMargin("");
+      setTpPrice("");
+      setSlPrice(""); // 입력창 초기화
+    } catch (error) {
+      // 에러 처리는 placeMarketOrder 내부에서 alert로 처리됨
+    }
   };
 
   return (
@@ -55,7 +76,11 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ currentPrice }) => {
       <div style={styles.walletInfo}>
         <span style={styles.label}>Available Balance</span>
         <span style={styles.balanceText}>
-          {availableBalance.toLocaleString()} USDT
+          {/* 🆕 optional chaining 또는 기본값 처리를 통해 .toLocaleString() 호출 보장 */}
+          {(availableBalance ?? 0).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+          })}{" "}
+          USDT
         </span>
       </div>
 
@@ -83,7 +108,9 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ currentPrice }) => {
             type="number"
             placeholder="0.00"
             value={margin}
-            onChange={(e) => setMargin(e.target.value)}
+            onChange={(e) =>
+              setMargin(e.target.value === "" ? "" : Number(e.target.value))
+            }
             style={styles.mainInput}
           />
           <span style={styles.unit}>USDT</span>
@@ -96,9 +123,11 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ currentPrice }) => {
           <label style={styles.smallLabel}>Take Profit</label>
           <input
             type="number"
-            placeholder="TP"
+            placeholder="TP Price"
             value={tpPrice}
-            onChange={(e) => setTpPrice(e.target.value)}
+            onChange={(e) =>
+              setTpPrice(e.target.value === "" ? "" : Number(e.target.value))
+            }
             style={styles.smallInput}
           />
         </div>
@@ -106,33 +135,45 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ currentPrice }) => {
           <label style={styles.smallLabel}>Stop Loss</label>
           <input
             type="number"
-            placeholder="SL"
+            placeholder="SL Price"
             value={slPrice}
-            onChange={(e) => setSlPrice(e.target.value)}
+            onChange={(e) =>
+              setSlPrice(e.target.value === "" ? "" : Number(e.target.value))
+            }
             style={styles.smallInput}
           />
         </div>
       </div>
 
-      {/* 5. Long/Short 버튼 (최종 확인 모달 트리거) */}
+      {/* 5. Long/Short 버튼 */}
       <div style={styles.btnRow}>
         <button
           onClick={() => openConfirmModal("LONG")}
-          disabled={!!currentPosition}
-          style={{ ...styles.actionBtn, backgroundColor: "#00b561" }}
+          disabled={loading || !!currentPosition}
+          style={{
+            ...styles.actionBtn,
+            backgroundColor: "#00b561",
+            opacity: loading || !!currentPosition ? 0.5 : 1,
+            cursor: loading || !!currentPosition ? "not-allowed" : "pointer",
+          }}
         >
-          Buy / Long
+          {loading ? "..." : "Buy / Long"}
         </button>
         <button
           onClick={() => openConfirmModal("SHORT")}
-          disabled={!!currentPosition}
-          style={{ ...styles.actionBtn, backgroundColor: "#eb4d4b" }}
+          disabled={loading || !!currentPosition}
+          style={{
+            ...styles.actionBtn,
+            backgroundColor: "#eb4d4b",
+            opacity: loading || !!currentPosition ? 0.5 : 1,
+            cursor: loading || !!currentPosition ? "not-allowed" : "pointer",
+          }}
         >
-          Sell / Short
+          {loading ? "..." : "Sell / Short"}
         </button>
       </div>
 
-      {/* 6. 🛡️ 최종 확인 모달 (Confirmation Modal) */}
+      {/* 6. 🛡️ 최종 확인 모달 */}
       {showModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
@@ -146,10 +187,10 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ currentPrice }) => {
             </h3>
 
             <div style={styles.confirmRow}>
-              <span>Symbol:</span> <strong>BTC/USDT</strong>
+              <span>Symbol:</span> <strong>BTCUSDT</strong>
             </div>
             <div style={styles.confirmRow}>
-              <span>Side:</span>{" "}
+              <span>Side:</span>
               <strong
                 style={{ color: side === "LONG" ? "#00b561" : "#eb4d4b" }}
               >
@@ -192,31 +233,18 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ currentPrice }) => {
   );
 };
 
-// --- [스타일] ---
+// --- [스타일 객체는 기존과 동일하게 유지됨] ---
 const styles: { [key: string]: React.CSSProperties } = {
-  // 1. 전체 컨테이너 (잘림 방지 및 스크롤 최적화)
   container: {
     padding: "16px",
     display: "flex",
     flexDirection: "column",
     gap: "12px",
-    height: "100%", // 부모 높이 꽉 채우기
-    overflowY: "auto", // 내용 많으면 패널 내부에서 스크롤
+    height: "100%",
+    overflowY: "auto",
     backgroundColor: "#131722",
     boxSizing: "border-box",
   },
-
-  // 2. 헤더 (제목)
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    borderBottom: "1px solid #2b3139",
-    paddingBottom: "10px",
-    whiteSpace: "nowrap", // 제목 잘림 방지
-  },
-
-  // 3. 지갑 정보 박스
   walletInfo: {
     padding: "10px",
     backgroundColor: "#1e222d",
@@ -226,13 +254,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   label: { fontSize: "12px", color: "#848e9c", marginBottom: "4px" },
   balanceText: { fontSize: "14px", fontWeight: "bold", color: "#d1d4dc" },
-
-  // 4. 섹션 (레버리지, 증거금 등 공통 섹션)
-  section: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px",
-  },
+  section: { display: "flex", flexDirection: "column", gap: "8px" },
   flexBetween: {
     display: "flex",
     justifyContent: "space-between",
@@ -240,8 +262,6 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   leverageValue: { color: "#fcd535", fontWeight: "bold" },
   range: { accentColor: "#2962FF", cursor: "pointer", width: "100%" },
-
-  // 5. 입력창 (Main Input)
   inputWrapper: { position: "relative" },
   mainInput: {
     width: "100%",
@@ -261,12 +281,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: "12px",
     color: "#5d6673",
   },
-
-  // 6. TP/SL 가로 배치 행
-  row: {
-    display: "flex",
-    gap: "10px",
-  },
+  row: { display: "flex", gap: "10px" },
   smallLabel: {
     fontSize: "11px",
     color: "#848e9c",
@@ -282,13 +297,11 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: "4px",
     fontSize: "12px",
   },
-
-  // 7. 하단 버튼 구역 (잘림 방지 고정 마진)
   btnRow: {
     display: "flex",
     gap: "10px",
-    marginTop: "10px", // 내용물과 붙어있게 함
-    paddingBottom: "10px", // 최하단 여유
+    marginTop: "10px",
+    paddingBottom: "10px",
   },
   actionBtn: {
     flex: 1,
@@ -300,25 +313,23 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: "pointer",
     fontSize: "14px",
   },
-
-  // 8. 🛡️ 최종 확인 모달 스타일
   modalOverlay: {
     position: "fixed",
     top: 0,
     left: 0,
     width: "100vw",
     height: "100vh",
-    backgroundColor: "rgba(0,0,0,0.8)", // 배경을 조금 더 어둡게
+    backgroundColor: "rgba(0,0,0,0.8)",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
-    zIndex: 10000, // 최상단 유지
+    zIndex: 10000,
   },
   modalContent: {
     backgroundColor: "#1e222d",
     padding: "24px",
     borderRadius: "8px",
-    width: "320px", // 모바일/소형 모니터 고려
+    width: "320px",
     border: "1px solid #2a2e39",
     boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
   },
@@ -329,11 +340,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: "10px",
     color: "#848e9c",
   },
-  modalBtnRow: {
-    display: "flex",
-    gap: "10px",
-    marginTop: "20px",
-  },
+  modalBtnRow: { display: "flex", gap: "10px", marginTop: "20px" },
   cancelBtn: {
     flex: 1,
     padding: "12px",
