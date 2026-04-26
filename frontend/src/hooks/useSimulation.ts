@@ -103,9 +103,13 @@ export const useSimulation = (symbol: string) => {
   // 양방향 모드일 경우 키가 달라질 수 있으므로, 값(Object.values)을 뒤져서 심볼이 같은 포지션을 찾습니다.
   const currentPosition = useMemo(() => {
     if (!status) return null;
-    return (
-      Object.values(status.positions).find((p) => p.symbol === symbol) || null
+    const posKey = Object.keys(status.positions).find((key) =>
+      key.startsWith(symbol),
     );
+    if (posKey) {
+      return { ...status.positions[posKey], symbol };
+    }
+    return null;
   }, [status, symbol]);
 
   return {
