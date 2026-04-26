@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { fetchChartData, subscribeChartData } from "./api";
 import TradingChart from "./TradingChart";
 
-// 🆕 시뮬레이션 컴포넌트 임포트
+// 시뮬레이션 컴포넌트 및 훅 임포트
 import { OrderPanel } from "./components/OrderPanel";
 import { PositionBoard } from "./components/PositionBoard";
+import { useSimulation } from "./hooks/useSimulation";
 
 function App() {
   const [chartData, setChartData] = useState<any>(null);
@@ -21,7 +22,10 @@ function App() {
 
   const [inputSymbol, setInputSymbol] = useState<string>("BTCUSDT");
   const [inputTimeframe, setInputTimeframe] = useState<string>("15m");
-  const [inputDays, setInputDays] = useState<number>(30);
+
+  // 🌟 [핵심] 시뮬레이션 상태 통합 관리
+  // 여기서 한 번 선언한 sim 객체를 아래에서 자식들에게 Props로 내려줍니다.
+  const sim = useSimulation(symbol);
 
   const [visibleLayers, setVisibleLayers] = useState({
     kijun: true,
@@ -58,9 +62,9 @@ function App() {
           setChartData((prev: any) => {
             if (!newData || !newData.candles || newData.candles.length === 0)
               return prev;
-            if (!prev || prev.symbol !== symbol || newData.symbol !== symbol)
-              return { ...newData, symbol };
+            if (!prev || prev.symbol !== symbol) return { ...newData, symbol };
 
+            // 캔들 병합 및 정렬 로직 (기존 유지)
             const candleMap = new Map();
             prev.candles.forEach((c: any) => candleMap.set(c.time, c));
             newData.candles.forEach((c: any) => candleMap.set(c.time, c));
@@ -68,25 +72,17 @@ function App() {
               (a, b) => a.time - b.time,
             );
 
-            const mergeIndicator = (prevIdx: any[], newIdx: any[]) => {
-              const iMap = new Map();
-              if (prevIdx) prevIdx.forEach((i) => iMap.set(i.time, i));
-              if (newIdx) newIdx.forEach((i) => iMap.set(i.time, i));
-              return Array.from(iMap.values()).sort((a, b) => a.time - b.time);
-            };
+            // 실시간 가격 업데이트
+            const lastPrice = mergedCandles[mergedCandles.length - 1].close;
+            setCurrentPrice(lastPrice);
 
-            const mergedIndicators = { ...prev.indicators };
-            Object.keys(newData.indicators || {}).forEach((key) => {
-              mergedIndicators[key] = mergeIndicator(
-                prev.indicators[key] || [],
-                newData.indicators[key] || [],
-              );
-            });
+            // 틱 체크 (포지션 청산/익절/손절 감시)
+            sim.checkTick(lastPrice);
 
             return {
               ...prev,
               candles: mergedCandles,
-              indicators: mergedIndicators,
+              indicators: newData.indicators, // 지표는 최신 데이터로 교체
             };
           });
         });
@@ -101,64 +97,11 @@ function App() {
       isActive = false;
       if (ws) ws.close();
     };
-  }, [symbol, timeframe, days]);
-
-  // 2️⃣ 실시간 가격 추출
-  useEffect(() => {
-    if (chartData && chartData.candles && chartData.candles.length > 0) {
-      const lastCandle = chartData.candles[chartData.candles.length - 1];
-      setCurrentPrice(lastCandle.close);
-    }
-  }, [chartData]);
-
-  // UI 스타일 (기존 유지)
-  const selectStyle = {
-    backgroundColor: "#1e222d",
-    color: "#d1d4dc",
-    border: "1px solid #2a2e39",
-    padding: "6px 12px",
-    borderRadius: "6px",
-    outline: "none",
-    cursor: "pointer",
-    fontSize: "0.85rem",
-  };
-  const inputStyle = {
-    backgroundColor: "#1e222d",
-    color: "#d1d4dc",
-    border: "1px solid #2a2e39",
-    padding: "6px 12px",
-    borderRadius: "6px",
-    outline: "none",
-    fontSize: "0.85rem",
-    width: "70px",
-  };
-  const btnStyle = {
-    backgroundColor: "#2962FF",
-    color: "#ffffff",
-    border: "none",
-    padding: "6px 16px",
-    borderRadius: "6px",
-    cursor: "pointer",
-    fontSize: "0.85rem",
-    fontWeight: 600,
-    marginLeft: "10px",
-  };
-  const checkboxLabelStyle = {
-    color: "#848e9c",
-    fontSize: "0.8rem",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    gap: "6px",
-    padding: "4px 8px",
-    borderRadius: "4px",
-    backgroundColor: "#1e222d",
-  };
+  }, [symbol, timeframe]);
 
   const handleApplySettings = () => {
     setSymbol(inputSymbol);
     setTimeframe(inputTimeframe);
-    if (inputDays > 0) setDays(inputDays);
   };
 
   return (
@@ -173,39 +116,17 @@ function App() {
         overflow: "hidden",
       }}
     >
-      {/* --- 헤더 & 툴바 --- */}
-      <header
-        style={{
-          height: "60px",
-          padding: "0 24px",
-          backgroundColor: "#131722",
-          borderBottom: "1px solid #2a2e39",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexShrink: 0,
-        }}
-      >
-        <h1
-          style={{
-            margin: 0,
-            color: "#d1d4dc",
-            fontSize: "1.1rem",
-            fontWeight: 600,
-          }}
-        >
+      {/* --- 헤더 & 툴바 (기존 유지) --- */}
+      <header style={headerStyle}>
+        <h1 style={logoStyle}>
           Crypto Master <span style={{ color: "#2962FF" }}>Dashboard</span>
         </h1>
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            padding: "6px 12px",
+            ...statusBadgeStyle,
             backgroundColor: isLive
               ? "rgba(38, 166, 154, 0.1)"
               : "rgba(239, 83, 80, 0.1)",
-            borderRadius: "20px",
           }}
         >
           <span
@@ -220,19 +141,9 @@ function App() {
         </div>
       </header>
 
-      <div
-        style={{
-          padding: "12px 24px",
-          backgroundColor: "#131722",
-          borderBottom: "1px solid #2a2e39",
-          display: "flex",
-          gap: "20px",
-          alignItems: "center",
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>Market:</span>
+      <div style={toolbarStyle}>
+        <div style={filterGroupStyle}>
+          <span style={labelStyle}>Market:</span>
           <select
             style={selectStyle}
             value={inputSymbol}
@@ -242,8 +153,8 @@ function App() {
             <option value="ETHUSDT">ETH/USDT</option>
           </select>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ color: "#848e9c", fontSize: "0.85rem" }}>Time:</span>
+        <div style={filterGroupStyle}>
+          <span style={labelStyle}>Time:</span>
           <select
             style={selectStyle}
             value={inputTimeframe}
@@ -253,7 +164,6 @@ function App() {
             <option value="5m">5m</option>
             <option value="15m">15m</option>
             <option value="1h">1h</option>
-            <option value="4h">4h</option>
             <option value="1d">1d</option>
           </select>
         </div>
@@ -263,29 +173,20 @@ function App() {
       </div>
 
       {/* --- 레이어 토글 --- */}
-      <div
-        style={{
-          padding: "8px 24px",
-          backgroundColor: "#131722",
-          borderBottom: "1px solid #2a2e39",
-          display: "flex",
-          gap: "10px",
-          flexShrink: 0,
-        }}
-      >
+      <div style={layerToggleStyle}>
         {Object.entries(visibleLayers).map(([key, isVisible]) => (
           <label key={key} style={checkboxLabelStyle}>
             <input
               type="checkbox"
               checked={isVisible}
               onChange={() => toggleLayer(key as any)}
-            />{" "}
+            />
             {key.toUpperCase()}
           </label>
         ))}
       </div>
 
-      {/* --- 🌟 수정된 메인 레이아웃 --- */}
+      {/* --- 🌟 메인 레이아웃 (데이터 바인딩 수정됨) --- */}
       <main
         className="app-main"
         style={{
@@ -296,30 +197,56 @@ function App() {
         }}
       >
         {error ? (
-          <div style={{ margin: "auto", textAlign: "center" }}>
+          <div style={centerMsgStyle}>
             <h3 style={{ color: "#ef5350" }}>{error}</h3>
           </div>
         ) : isLoading || !chartData ? (
-          <div style={{ margin: "auto", color: "#d1d4dc" }}>LOADING...</div>
+          <div style={centerMsgStyle}>LOADING...</div>
         ) : (
           <>
-            {/* 📈 상단: 차트 섹션 (CSS 클래스 적용으로 Volume 공간 확보) */}
-            <div className="chart-section">
+            <div
+              className="chart-section"
+              style={{ flex: 2, minHeight: "450px" }}
+            >
               <TradingChart
                 key={`${symbol}-${timeframe}`}
-                data={chartData}
+                // 🆕 차트에 현재 포지션 정보를 넘겨서 선을 그리게 합니다.
+                data={{ ...chartData, currentPosition: sim.currentPosition }}
                 settings={visibleLayers}
                 symbol={symbol}
               />
             </div>
 
-            {/* 🎮 하단: 패널 섹션 (잘림 방지 고정 레이아웃) */}
-            <div className="bottom-section">
-              <div className="position-section">
-                <PositionBoard currentPrice={currentPrice} />
+            <div
+              className="bottom-section"
+              style={{
+                flex: 1,
+                display: "flex",
+                borderTop: "1px solid #2a2e39",
+                minHeight: "250px",
+              }}
+            >
+              <div
+                className="position-section"
+                style={{ flex: 1.5, borderRight: "1px solid #2a2e39" }}
+              >
+                {/* 🆕 포지션 보드에 상태와 종료 함수 연결 */}
+                <PositionBoard
+                  currentPrice={currentPrice}
+                  status={sim.status}
+                  closeMarketPosition={sim.closeMarketPosition}
+                />
               </div>
-              <div className="order-section">
-                <OrderPanel currentPrice={currentPrice} />
+              <div className="order-section" style={{ flex: 1 }}>
+                {/* 🆕 주문 패널에 모든 기능과 리셋 함수 연결 */}
+                <OrderPanel
+                  currentPrice={currentPrice}
+                  placeMarketOrder={sim.placeMarketOrder}
+                  resetSimulation={sim.resetSimulation}
+                  loading={sim.loading}
+                  currentPosition={sim.currentPosition}
+                  availableBalance={sim.status?.available_balance ?? 0}
+                />
               </div>
             </div>
           </>
@@ -328,5 +255,92 @@ function App() {
     </div>
   );
 }
+
+// --- 스타일 객체 (가독성을 위해 하단 배치) ---
+const headerStyle: React.CSSProperties = {
+  height: "60px",
+  padding: "0 24px",
+  backgroundColor: "#131722",
+  borderBottom: "1px solid #2a2e39",
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  flexShrink: 0,
+};
+const logoStyle: React.CSSProperties = {
+  margin: 0,
+  color: "#d1d4dc",
+  fontSize: "1.1rem",
+  fontWeight: 600,
+};
+const statusBadgeStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "6px 12px",
+  borderRadius: "20px",
+};
+const toolbarStyle: React.CSSProperties = {
+  padding: "12px 24px",
+  backgroundColor: "#131722",
+  borderBottom: "1px solid #2a2e39",
+  display: "flex",
+  gap: "20px",
+  alignItems: "center",
+  flexShrink: 0,
+};
+const filterGroupStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+};
+const labelStyle: React.CSSProperties = {
+  color: "#848e9c",
+  fontSize: "0.85rem",
+};
+const selectStyle: React.CSSProperties = {
+  backgroundColor: "#1e222d",
+  color: "#d1d4dc",
+  border: "1px solid #2a2e39",
+  padding: "6px 12px",
+  borderRadius: "6px",
+  outline: "none",
+  cursor: "pointer",
+  fontSize: "0.85rem",
+};
+const btnStyle: React.CSSProperties = {
+  backgroundColor: "#2962FF",
+  color: "#ffffff",
+  border: "none",
+  padding: "6px 16px",
+  borderRadius: "6px",
+  cursor: "pointer",
+  fontSize: "0.85rem",
+  fontWeight: 600,
+};
+const layerToggleStyle: React.CSSProperties = {
+  padding: "8px 24px",
+  backgroundColor: "#131722",
+  borderBottom: "1px solid #2a2e39",
+  display: "flex",
+  gap: "10px",
+  flexShrink: 0,
+};
+const checkboxLabelStyle: React.CSSProperties = {
+  color: "#848e9c",
+  fontSize: "0.8rem",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  padding: "4px 8px",
+  borderRadius: "4px",
+  backgroundColor: "#1e222d",
+};
+const centerMsgStyle: React.CSSProperties = {
+  margin: "auto",
+  textAlign: "center",
+  color: "#d1d4dc",
+};
 
 export default App;

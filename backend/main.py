@@ -221,10 +221,16 @@ async def process_price_tick(req: TickRequest):
 
 @app.post("/api/simulation/reset")
 async def reset_simulation():
-    """시뮬레이션 초기화"""
     global sim_wallet
-    sim_wallet = Wallet(initial_balance=Decimal('10000.0'))
-    return {"message": "초기화 완료"}
+    # 지갑을 초기 상태로 덮어씌웁니다.
+    sim_wallet = Wallet(
+        initial_balance=Decimal('10000.0'),
+        total_balance=Decimal('10000.0'),
+        available_balance=Decimal('10000.0'),
+        frozen_margin=Decimal('0.0'),
+        positions={}
+    )
+    return {"message": "시뮬레이션이 초기화되었습니다."}
 
 # --- [5. 기존 히스토리 및 웹소켓 엔드포인트] ---
 def backfill_historical_data(symbol: str, timeframe: str, days: int):

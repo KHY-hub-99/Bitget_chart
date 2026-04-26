@@ -1,4 +1,4 @@
-/* 폰트 및 기본 초기화 (기존 동일) */
+/* 폰트 및 기본 초기화 (기존 유지) */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap");
 
 * {
@@ -25,95 +25,135 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ========================================
+    ✨ 추가: 공통 클래스 및 유틸리티
+   ======================================== */
+
 .tabular-nums {
   font-family: "IBM Plex Mono", monospace;
   font-variant-numeric: tabular-nums;
 }
 
-/* 스크롤바 디자인 (기존 동일) */
+/* 버튼 클릭 피드백 */
+button:active {
+  transform: scale(0.98);
+}
+
+/* 스크롤바 디자인 (기존 유지) */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
   background: #131722;
 }
 ::-webkit-scrollbar-thumb {
   background: #2a2e39;
-  border-radius: 3px;
+  border-radius: 10px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #363c4e;
 }
 
-/* UI 요소 최적화 (기존 동일) */
-select,
-button,
-input {
-  font-family: inherit;
-}
-input:-webkit-autofill {
-  -webkit-box-shadow: 0 0 0 30px #1e222d inset !important;
-  -webkit-text-fill-color: #d1d4dc !important;
-}
-input[type="number"]::-webkit-outer-spin-button,
-input[type="number"]::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-input[type="number"] {
-  -moz-appearance: textfield;
-}
-input[type="range"] {
-  accent-color: #2962ff;
-  cursor: pointer;
-}
-
 /* ========================================
-   🚀 레이아웃 수정 (잘림 방지 핵심)
+    🚀 레이아웃 수정 (최적화 버전)
    ======================================== */
 
-/* 1. App.tsx의 main 태그에 적용될 스타일 */
 .app-main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* 전체 스크롤 방지 */
+  overflow: hidden;
 }
 
-/* 2. 상단 차트 영역: 거래량이 보일 공간을 강제로 확보 */
 .chart-section {
   flex: 1;
   position: relative;
-  min-height: 400px; /* 🌟 매우 중요: 차트와 거래량이 뭉개지지 않는 최소 높이 */
+  min-height: 400px;
   background-color: #131722;
+  border-bottom: 1px solid #1e222d;
 }
 
-/* 3. 하단 전체 섹션 */
 .bottom-section {
   display: flex;
   flex-direction: row;
-  height: 35vh; /* 화면의 35%만 차지하게 조정 (기존 40%는 너무 큼) */
-  min-height: 380px; /* 주문 패널이 다 보일 정도의 최소 높이 */
-  background-color: #1e2026;
+  height: 38vh; /* 조금 더 확보 */
+  min-height: 320px;
+  background-color: #161a1e;
   border-top: 1px solid #2b3139;
-  flex-shrink: 0; /* 🌟 상단 차트에 의해 하단이 찌그러지지 않게 방지 */
+  flex-shrink: 0;
 }
 
-/* 4. 하단 좌측: 포지션 현황 */
+/* 포지션 테이블 헤더 고정 (중요!) */
 .position-section {
   flex: 1;
-  overflow-y: auto; /* 내용 많으면 내부 스크롤 */
-  min-width: 0; /* flex 자식의 최소 너비 버그 방지 */
+  overflow-y: auto;
+  min-width: 0;
+  position: relative;
 }
 
-/* 5. 하단 우측: 주문 패널 */
+/* 테이블 제목줄(thead) 스크롤 시 상단 고정 */
+.position-section table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: #161a1e;
+}
+
 .order-section {
-  width: 340px;
-  min-width: 340px;
+  width: 320px; /* 표준 거래소 너비 */
+  min-width: 320px;
   border-left: 1px solid #2b3139;
   display: flex;
   flex-direction: column;
   background-color: #131722;
-  overflow-y: auto; /* 내용 잘리면 내부 스크롤 */
+  overflow-y: auto;
+}
+
+/* ========================================
+    🎨 컴포넌트 디테일 스타일
+   ======================================== */
+
+/* 라이브 상태 배지 애니메이션 */
+.status-badge.live::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background-color: #26a69a;
+  border-radius: 50%;
+  margin-right: 6px;
+  animation: blink 1.5s infinite;
+}
+
+@keyframes blink {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* 주문 패널 입력창 포커스 효과 */
+.order-section input:focus {
+  border-color: #2962ff !important;
+  background-color: #1e222d;
+}
+
+/* 리셋 버튼 호버 효과 */
+.reset-btn:hover {
+  background-color: #363c4e !important;
+  color: #fff !important;
+  border-color: #5d6673 !important;
+}
+
+/* 포지션 종료 버튼 호버 */
+.close-btn:hover {
+  background-color: #f6465d !important;
+  border-color: #f6465d !important;
+  color: #fff !important;
 }

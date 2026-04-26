@@ -11,6 +11,7 @@ interface OrderPanelProps {
     tp?: number,
     sl?: number,
   ) => Promise<void>;
+  resetSimulation: () => Promise<void>; // 🆕 리셋 함수 추가
   loading: boolean;
   currentPosition: any;
   availableBalance: number;
@@ -19,17 +20,17 @@ interface OrderPanelProps {
 export const OrderPanel: React.FC<OrderPanelProps> = ({
   currentPrice,
   placeMarketOrder,
+  resetSimulation, // 🆕 props에서 가져옴
   loading,
   currentPosition,
-  availableBalance = 0, // 🆕 기본값 0 설정 (undefined 방지)
+  availableBalance = 0,
 }) => {
-  // --- [로컬 상태 관리: 입력값들] ---
+  // --- [로컬 상태 관리] ---
   const [leverage, setLeverage] = useState<number>(10);
   const [margin, setMargin] = useState<number | "">("");
   const [tpPrice, setTpPrice] = useState<number | "">("");
   const [slPrice, setSlPrice] = useState<number | "">("");
 
-  // 최종 확인 모달 상태
   const [showModal, setShowModal] = useState(false);
   const [side, setSide] = useState<"LONG" | "SHORT">("LONG");
 
@@ -41,12 +42,8 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
 
   // --- [핸들러 함수] ---
   const openConfirmModal = (selectedSide: "LONG" | "SHORT") => {
-    if (!margin || Number(margin) <= 0) {
-      return alert("증거금을 입력해주세요.");
-    }
-    if (Number(margin) > availableBalance) {
-      return alert("잔액이 부족합니다.");
-    }
+    if (!margin || Number(margin) <= 0) return alert("증거금을 입력해주세요.");
+    if (Number(margin) > availableBalance) return alert("잔액이 부족합니다.");
     setSide(selectedSide);
     setShowModal(true);
   };
@@ -61,22 +58,29 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
         tpPrice ? Number(tpPrice) : undefined,
         slPrice ? Number(slPrice) : undefined,
       );
-      setShowModal(false); // 주문 성공 시 모달 닫기
+      setShowModal(false);
       setMargin("");
       setTpPrice("");
-      setSlPrice(""); // 입력창 초기화
-    } catch (error) {
-      // 에러 처리는 placeMarketOrder 내부에서 alert로 처리됨
-    }
+      setSlPrice("");
+    } catch (error) {}
   };
 
   return (
     <div style={styles.container}>
-      {/* 1. 지갑 정보 */}
+      {/* 1. 지갑 정보 및 리셋 버튼 */}
       <div style={styles.walletInfo}>
-        <span style={styles.label}>Available Balance</span>
+        <div style={styles.flexBetween}>
+          <span style={styles.label}>Available Balance</span>
+          {/* 🆕 리셋 버튼 추가 */}
+          <button
+            onClick={resetSimulation}
+            style={styles.resetBtn}
+            title="잔고를 10,000 USDT로 초기화합니다"
+          >
+            Reset
+          </button>
+        </div>
         <span style={styles.balanceText}>
-          {/* 🆕 optional chaining 또는 기본값 처리를 통해 .toLocaleString() 호출 보장 */}
           {(availableBalance ?? 0).toLocaleString(undefined, {
             minimumFractionDigits: 2,
           })}{" "}
@@ -173,7 +177,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
         </button>
       </div>
 
-      {/* 6. 🛡️ 최종 확인 모달 */}
+      {/* 6. 최종 확인 모달 (기존과 동일) */}
       {showModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
@@ -185,12 +189,11 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
             >
               Confirm {side} Order
             </h3>
-
             <div style={styles.confirmRow}>
               <span>Symbol:</span> <strong>BTCUSDT</strong>
             </div>
             <div style={styles.confirmRow}>
-              <span>Side:</span>
+              <span>Side:</span>{" "}
               <strong
                 style={{ color: side === "LONG" ? "#00b561" : "#eb4d4b" }}
               >
@@ -233,7 +236,6 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
   );
 };
 
-// --- [스타일 객체는 기존과 동일하게 유지됨] ---
 const styles: { [key: string]: React.CSSProperties } = {
   container: {
     padding: "16px",
@@ -254,6 +256,19 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   label: { fontSize: "12px", color: "#848e9c", marginBottom: "4px" },
   balanceText: { fontSize: "14px", fontWeight: "bold", color: "#d1d4dc" },
+
+  // 🆕 리셋 버튼 스타일
+  resetBtn: {
+    padding: "2px 8px",
+    backgroundColor: "#2b3139",
+    color: "#848e9c",
+    border: "1px solid #474d57",
+    borderRadius: "4px",
+    fontSize: "10px",
+    cursor: "pointer",
+    transition: "all 0.2s",
+  },
+
   section: { display: "flex", flexDirection: "column", gap: "8px" },
   flexBetween: {
     display: "flex",
