@@ -559,6 +559,101 @@ async def websocket_simulation_logs(websocket: WebSocket):
         print("[WS ⚪] 시뮬레이션 로그 소켓 연결 종료")
     except Exception as e:
         print(f"[WS 🔴] 로그 전송 에러: {e}")
+        
+# --- [8. 차트 시각화 전용 Replay API (추가)] ---
+
+@app.get("/api/simulation/replay")
+async def get_simulation_replay(
+    symbol: str = Query("BTCUSDT"),
+    timeframe: str = Query("15m"),
+    mode: str = Query("HEDGE"),
+    leverage: int = Query(10),
+    tp_ratio: float = Query(0.05),
+    sl_ratio: float = Query(0.05),
+    limit: int = Query(1000)
+):
+    """
+    특정 전략 파라미터로 과거 데이터를 훑으며 매매 타점(마커)을 생성합니다.
+    """
+    feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
+    df = feed.load_latest_from_db(limit=limit)
+    
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail="시뮬레이션 데이터가 없습니다.")
+
+    # 1. 차트 기본 OHLC 데이터 변환
+    chart_df = feed.get_chart_df(limit=limit)
+    chart_data = convert_df_to_chart_data(chart_df)
+    
+    # 2. 독립 시뮬레이션 환경 (기존 지갑에 영향 주지 않음)
+    engine = SimulationEngine(fee_rate=Decimal('0.0005'), slippage_rate=Decimal('0.0002'))
+    pos_mode = PositionMode.HEDGE if mode == "HEDGE" else PositionMode.ONE_WAY
+    temp_wallet = Wallet(initial_balance=Decimal('10000.0'), position_mode=pos_mode)
+    
+    markers = []
+    
+    # 3. 캔들 루프 시뮬레이션 (itertuples로 고속 순회)
+    for row in df.itertuples():
+        curr_p = Decimal(str(row.close))
+        
+        # ✅ [핵심 수정] DB에서 시간이 인덱스로 셋팅되어 있으므로 row.Index에서 추출
+        if hasattr(row, 'Index') and pd.notnull(row.Index):
+            ts = int(row.Index.timestamp())
+        else:
+            continue
+
+        m_long = getattr(row, 'master_long', False)
+        m_short = getattr(row, 'master_short', False)
+
+        # [A] 기존 포지션 트리거(익절/손절/청산) 감시
+        res_list = engine.check_triggers(temp_wallet, symbol, curr_p)
+        if res_list:
+            for res in res_list:
+                markers.append({
+                    "time": ts,
+                    "action": "SELL", # 정산 시점 표시
+                    "price": float(res.get('price', curr_p)),
+                    "reason": res.get('status', 'CLOSED')
+                })
+
+        # [B] 단방향 모드 스위칭 감시
+        if pos_mode == PositionMode.ONE_WAY:
+            pos_key = symbol
+            if pos_key in temp_wallet.positions:
+                side = temp_wallet.positions[pos_key].side
+                opp_signal = (side == PositionSide.LONG and m_short) or (side == PositionSide.SHORT and m_long)
+                if opp_signal:
+                    res = engine._close_position(temp_wallet, pos_key, curr_p, "SWITCHED")
+                    markers.append({
+                        "time": ts, "action": "SELL", "price": float(curr_p), "reason": "SWITCHED"
+                    })
+
+        # [C] 신규 진입 및 불타기
+        if m_long or m_short:
+            side = PositionSide.LONG if m_long else PositionSide.SHORT
+            action = "BUY" if side == PositionSide.LONG else "SELL"
+            
+            # 전략 파라미터 적용
+            tp_p = curr_p * (Decimal('1') + Decimal(str(tp_ratio))) if side == PositionSide.LONG else curr_p * (Decimal('1') - Decimal(str(tp_ratio)))
+            sl_p = curr_p * (Decimal('1') - Decimal(str(sl_ratio))) if side == PositionSide.LONG else curr_p * (Decimal('1') + Decimal(str(sl_ratio)))
+            
+            pos_key = engine._get_position_key(symbol, side, pos_mode)
+            is_pyramid = pos_key in temp_wallet.positions
+            
+            engine.open_position(temp_wallet, symbol, side, curr_p, leverage, Decimal('1000'), tp_p, sl_p)
+            
+            markers.append({
+                "time": ts,
+                "action": action,
+                "price": float(curr_p),
+                "reason": "PYRAMID" if is_pyramid else "ENTRY"
+            })
+
+    return {
+        "status": "success",
+        "data": chart_data,
+        "markers": markers
+    }
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

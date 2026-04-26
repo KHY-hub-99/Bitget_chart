@@ -1,5 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { analysisApi, StrategyRank } from "../api";
+import SimulationReplayChart, {
+  CandleData,
+  TradeMarker,
+} from "./SimulationReplayChart";
 
 const SimulationResultsPage: React.FC = () => {
   const [rankings, setRankings] = useState<StrategyRank[]>([]);
@@ -8,6 +12,15 @@ const SimulationResultsPage: React.FC = () => {
   // 필터 상태
   const [symbol, setSymbol] = useState<string>("ALL");
   const [timeframe, setTimeframe] = useState<string>("ALL");
+
+  // [추가] 모달 및 차트 상태 관리
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [replayLoading, setReplayLoading] = useState<boolean>(false);
+  const [replayData, setReplayData] = useState<CandleData[]>([]);
+  const [replayMarkers, setReplayMarkers] = useState<TradeMarker[]>([]);
+  const [selectedStrategy, setSelectedStrategy] = useState<StrategyRank | null>(
+    null,
+  );
 
   const loadRankings = async () => {
     setLoading(true);
@@ -27,6 +40,46 @@ const SimulationResultsPage: React.FC = () => {
     loadRankings();
   }, [symbol, timeframe]);
 
+  // [추가] 행 클릭 시 해당 전략으로 Replay API 호출 및 모달 열기
+  const handleRowClick = async (rank: StrategyRank) => {
+    const targetSymbol = symbol === "ALL" ? "BTCUSDT" : symbol;
+    const targetTimeframe = timeframe === "ALL" ? "15m" : timeframe;
+
+    setSelectedStrategy(rank);
+    setIsModalOpen(true);
+    setReplayLoading(true);
+
+    try {
+      const response = await analysisApi.getSimulationReplay(
+        targetSymbol,
+        targetTimeframe,
+        rank.position_mode,
+        rank.leverage,
+        rank.tp_ratio,
+        rank.sl_ratio,
+      );
+
+      // ✅ [진짜 핵심 수정] response.data.candles 로 다시 되돌려줍니다!
+      // (백엔드에서 {"candles": [...], "volumes": [...]} 형태로 오기 때문)
+      const rawData = response.data.candles || [];
+
+      // 시간 포맷 강제 변환 (안전장치)
+      const formattedData = rawData.map((d: any) => ({
+        ...d,
+        time: d.time > 10000000000 ? Math.floor(d.time / 1000) : d.time,
+      }));
+
+      setReplayData(formattedData);
+      setReplayMarkers(response.markers || []);
+    } catch (error) {
+      console.error("차트 복기 데이터 로드 실패:", error);
+      alert("차트 데이터를 불러오는데 실패했습니다.");
+      setIsModalOpen(false);
+    } finally {
+      setReplayLoading(false);
+    }
+  };
+
   return (
     <div style={pageContainerStyle}>
       {/* 1. 상단 헤더 및 필터 영역 */}
@@ -34,7 +87,8 @@ const SimulationResultsPage: React.FC = () => {
         <div>
           <h2 style={titleStyle}>전략 성과 랭킹 보드</h2>
           <p style={subtitleStyle}>
-            최적의 수익성과 안정성을 가진 파라미터 조합을 탐색합니다.
+            최적의 수익성과 안정성을 가진 파라미터 조합을 탐색합니다. (행을
+            클릭하면 차트 복기가 열립니다)
           </p>
         </div>
 
@@ -112,6 +166,7 @@ const SimulationResultsPage: React.FC = () => {
                   <tr
                     key={index}
                     style={index < 3 ? topRankRowStyle : rowStyle}
+                    onClick={() => handleRowClick(rank)} // 클릭 이벤트 바인딩
                   >
                     <td style={tdStyle}>
                       {index === 0
@@ -212,6 +267,66 @@ const SimulationResultsPage: React.FC = () => {
           </tbody>
         </table>
       </div>
+
+      {/* 3. [추가] 차트 복기 모달(Modal) 창 */}
+      {isModalOpen && (
+        <div style={modalOverlayStyle} onClick={() => setIsModalOpen(false)}>
+          <div style={modalContentStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={modalHeaderStyle}>
+              <h3
+                style={{
+                  margin: 0,
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                📊 전략 복기 차트
+                <span
+                  style={{
+                    color: "#848e9c",
+                    fontSize: "0.9rem",
+                    marginLeft: "10px",
+                    fontWeight: "normal",
+                  }}
+                >
+                  ({selectedStrategy?.position_mode} |{" "}
+                  {selectedStrategy?.leverage}x | TP{" "}
+                  {(selectedStrategy?.tp_ratio || 0) * 100}% | SL{" "}
+                  {(selectedStrategy?.sl_ratio || 0) * 100}%)
+                </span>
+              </h3>
+              <button
+                style={closeBtnStyle}
+                onClick={() => setIsModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ padding: "20px" }}>
+              {replayLoading ? (
+                <div
+                  style={{
+                    height: "500px",
+                    display: "flex",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    color: "#848e9c",
+                  }}
+                >
+                  서버에서 차트와 타점 데이터를 생성 중입니다...
+                </div>
+              ) : (
+                <SimulationReplayChart
+                  data={replayData}
+                  markers={replayMarkers}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -309,7 +424,11 @@ const tdStyle: React.CSSProperties = {
   verticalAlign: "middle",
 };
 
-const rowStyle: React.CSSProperties = { transition: "background-color 0.2s" };
+// [수정] 행 클릭을 유도하는 커서 포인터 추가
+const rowStyle: React.CSSProperties = {
+  transition: "background-color 0.2s",
+  cursor: "pointer",
+};
 const topRankRowStyle: React.CSSProperties = {
   ...rowStyle,
   backgroundColor: "rgba(41, 98, 255, 0.08)", // 상위 랭크 하이라이트
@@ -369,6 +488,49 @@ const disabledBtnStyle = {
   backgroundColor: "#2a2e39",
   color: "#848e9c",
   cursor: "not-allowed",
+};
+
+// --- [추가] 모달 전용 스타일 ---
+const modalOverlayStyle: React.CSSProperties = {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  width: "100%",
+  height: "100%",
+  backgroundColor: "rgba(0, 0, 0, 0.7)",
+  display: "flex",
+  justifyContent: "center",
+  alignItems: "center",
+  zIndex: 1000,
+  backdropFilter: "blur(4px)",
+};
+
+const modalContentStyle: React.CSSProperties = {
+  backgroundColor: "#131722",
+  width: "90%",
+  maxWidth: "1200px",
+  borderRadius: "12px",
+  border: "1px solid #2a2e39",
+  boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+  display: "flex",
+  flexDirection: "column",
+};
+
+const modalHeaderStyle: React.CSSProperties = {
+  padding: "16px 20px",
+  borderBottom: "1px solid #2a2e39",
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+};
+
+const closeBtnStyle: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  color: "#848e9c",
+  fontSize: "1.5rem",
+  cursor: "pointer",
+  lineHeight: 1,
 };
 
 export default SimulationResultsPage;

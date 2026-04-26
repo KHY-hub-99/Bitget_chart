@@ -92,7 +92,6 @@ export const simulationApi = {
 
   // 3. 포지션 시장가 종료
   closePosition: async (targetKey: string) => {
-    // 💡 심볼이 아닌 '포지션 키'를 보내도록 이름 변경 (Hedge 대응)
     const response = await axios.post(
       `${API_BASE}/api/simulation/close`,
       null,
@@ -118,7 +117,7 @@ export const simulationApi = {
     return response.data;
   },
 
-  // 6. 포지션 모드 변경 API 추가 (이게 빠져있어서 에러가 났던 것입니다!)
+  // 6. 포지션 모드 변경
   setMode: async (mode: "ONE_WAY" | "HEDGE") => {
     const response = await axios.post(`${API_BASE}/api/simulation/mode`, {
       mode: mode,
@@ -137,14 +136,14 @@ export interface StrategyRank {
   total_trades: number;
   wins: number;
   losses: number;
-  liquidations: number; // 추가
-  switches: number; // 추가
+  liquidations: number;
+  switches: number;
   total_pnl: number;
   avg_pnl: number;
   total_pyramid_count: number;
-  avg_mdd_rate: number; // 추가
-  max_drawdown: number; // 추가
-  win_rate?: string; // 백엔드에서 계산해서 주거나 프론트에서 계산
+  avg_mdd_rate: number;
+  max_drawdown: number;
+  win_rate?: string;
 }
 
 export const analysisApi = {
@@ -154,7 +153,7 @@ export const analysisApi = {
     timeframe: string = "ALL",
   ): Promise<StrategyRank[]> => {
     const response = await axios.get(`${API_BASE}/api/strategy-ranking`, {
-      params: { symbol, timeframe }, // axios params로 전달
+      params: { symbol, timeframe },
     });
     return response.data.data;
   },
@@ -183,6 +182,29 @@ export const analysisApi = {
     return response.data;
   },
 
-  // 4. 시뮬레이션 로그 웹소켓 주소 반환 (컴포넌트에서 사용)
+  // 4. 시뮬레이션 로그 웹소켓 주소 반환
   getLogSocketUrl: () => `${WS_BASE}/ws/simulation/logs`,
+
+  // 🟢 [추가됨] 5. 차트 복기(Replay) 데이터 요청
+  getSimulationReplay: async (
+    symbol: string,
+    timeframe: string,
+    mode: string,
+    leverage: number,
+    tp_ratio: number,
+    sl_ratio: number,
+  ): Promise<{ data: any[]; markers: any[] }> => {
+    const response = await axios.get(`${API_BASE}/api/simulation/replay`, {
+      params: {
+        symbol,
+        timeframe,
+        mode,
+        leverage,
+        tp_ratio,
+        sl_ratio,
+        limit: 1000, // 최근 1,000개 캔들 기준 (필요시 조절 가능)
+      },
+    });
+    return response.data;
+  },
 };
