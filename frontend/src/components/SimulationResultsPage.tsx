@@ -281,7 +281,7 @@ const SimulationResultsPage: React.FC = () => {
                   alignItems: "center",
                 }}
               >
-                📊 전략 복기 차트
+                전략 복기 차트
                 <span
                   style={{
                     color: "#848e9c",
