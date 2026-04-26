@@ -1,12 +1,12 @@
 import React from "react";
-// api.ts에서 정의한 타입을 가져옵니다 (경로 확인 필요)
 import { SimulationStatus } from "../api";
 
 interface PositionBoardProps {
   currentPrice: number;
   activeSymbol: string;
   status: SimulationStatus | null;
-  closeMarketPosition: (key?: string) => Promise<void>; // 🆕 파라미터 타입 추가
+  // BUG FIX: (key?: string) → (key: string) — 항상 포지션 키를 받아야 하므로 optional 제거
+  closeMarketPosition: (key: string) => Promise<void>;
 }
 
 export const PositionBoard: React.FC<PositionBoardProps> = ({
@@ -15,8 +15,6 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
   status,
   closeMarketPosition,
 }) => {
-  // ❌ 내부 useSimulation 호출 삭제 (부모에서 넘겨받은 Props 사용)
-
   if (!status)
     return (
       <div style={styles.container}>
@@ -79,8 +77,6 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
               const isLong = pos.side === "LONG";
               const sideColor = isLong ? "#00b561" : "#ff4c4c";
 
-              // 🌟 시장 가격 결정 로직 🌟
-              // 🎯 3. positionKey가 아닌 포지션 객체 안의 진짜 'pos.symbol'을 비교합니다!
               const markPrice =
                 pos.mark_price && pos.mark_price !== 0
                   ? pos.mark_price
@@ -90,14 +86,11 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                 ? (markPrice - pos.entry_price) * pos.size
                 : (pos.entry_price - markPrice) * pos.size;
 
-              // ROE 및 PNL 계산
               const roe = (unrealizedPnl / (pos.isolated_margin || 1)) * 100;
               const pnlColor = unrealizedPnl >= 0 ? "#00b561" : "#ff4c4c";
 
-              // 🎯 4. tr의 key도 positionKey로 적용
               return (
                 <tr key={positionKey} style={styles.tdRow}>
-                  {/* 1. 계약 (Symbol) - pos.symbol 출력 */}
                   <td style={styles.td}>
                     <span
                       style={{
@@ -114,17 +107,14 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                     <span style={styles.leverageBadge}>{pos.leverage}x</span>
                   </td>
 
-                  {/* 2. 수량 (Size) */}
                   <td style={styles.td}>{pos.size.toFixed(4)}</td>
 
-                  {/* 3. 진입 가격 (Entry) */}
                   <td style={styles.td}>
                     {Number(pos.entry_price).toLocaleString(undefined, {
                       minimumFractionDigits: 2,
                     })}
                   </td>
 
-                  {/* 4. 시장 가격 (Mark) */}
                   <td style={styles.td}>
                     <strong style={{ color: "#eaecef" }}>
                       {Number(markPrice).toLocaleString(undefined, {
@@ -133,7 +123,6 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                     </strong>
                   </td>
 
-                  {/* 5. 강제 청산가 (Liq. Price) - 수정됨 */}
                   <td
                     style={{
                       ...styles.td,
@@ -146,10 +135,8 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                     })}
                   </td>
 
-                  {/* 6. 격리 증거금 (Margin) - 수정됨 */}
                   <td style={styles.td}>{pos.isolated_margin.toFixed(2)}</td>
 
-                  {/* 7. TP / SL */}
                   <td style={styles.td}>
                     {pos.take_profit_price
                       ? Number(pos.take_profit_price).toLocaleString()
@@ -160,7 +147,6 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                       : "--"}
                   </td>
 
-                  {/* 8. 미실현 손익 (ROE%) */}
                   <td
                     style={{
                       ...styles.td,
@@ -178,9 +164,7 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                     </div>
                   </td>
 
-                  {/* 9. 종료 (Close) */}
                   <td style={styles.td}>
-                    {/* 🎯 5. 종료 함수에 백엔드로 보낼 고유 키(positionKey)를 전달! */}
                     <button
                       onClick={() => closeMarketPosition(positionKey)}
                       className="close-btn"
@@ -199,7 +183,6 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
   );
 };
 
-// --- [스타일 설정은 기존과 동일] ---
 const styles: { [key: string]: React.CSSProperties } = {
   container: {
     backgroundColor: "#1e2026",

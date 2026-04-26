@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 
-// Props 인터페이스 정의 (새로운 필드 추가)
+// BUG FIX: currentPosition 제거 (App.tsx에서 전달되지 않고 컴포넌트 내부에서도 미사용)
+//          activePositions 추가 (App.tsx에서 전달되나 interface에 누락됐던 항목)
 interface OrderPanelProps {
   currentPrice: number;
   placeMarketOrder: (
@@ -13,7 +14,7 @@ interface OrderPanelProps {
   ) => Promise<void>;
   resetSimulation: () => Promise<void>;
   loading: boolean;
-  currentPosition: any;
+  activePositions: any[];
   availableBalance: number;
   changePositionMode: (mode: "ONE_WAY" | "HEDGE") => Promise<void>;
   positionMode: "ONE_WAY" | "HEDGE";
@@ -24,12 +25,10 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
   placeMarketOrder,
   resetSimulation,
   loading,
-  currentPosition,
   availableBalance = 0,
   changePositionMode,
   positionMode,
 }) => {
-  // --- [로컬 상태 관리] ---
   const [leverage, setLeverage] = useState<number>(10);
   const [margin, setMargin] = useState<number | "">("");
   const [tpPrice, setTpPrice] = useState<number | "">("");
@@ -38,13 +37,11 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
   const [showModal, setShowModal] = useState(false);
   const [side, setSide] = useState<"LONG" | "SHORT">("LONG");
 
-  // --- [계산 로직] ---
   const size = useMemo(() => {
     if (!margin || !currentPrice) return 0;
     return (Number(margin) * leverage) / currentPrice;
   }, [margin, leverage, currentPrice]);
 
-  // --- [핸들러 함수] ---
   const openConfirmModal = (selectedSide: "LONG" | "SHORT") => {
     if (!margin || Number(margin) <= 0) return alert("증거금을 입력해주세요.");
     if (Number(margin) > availableBalance) return alert("잔액이 부족합니다.");
@@ -71,13 +68,12 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
 
   return (
     <div style={styles.container}>
-      {/* 🆕 0. 포지션 모드 선택 탭 (Hedge / One-Way) */}
+      {/* 0. 포지션 모드 선택 탭 */}
       <div style={styles.modeTabContainer}>
         <button
           onClick={() => changePositionMode("ONE_WAY")}
           style={{
             ...styles.modeBtn,
-            // 현재 모드가 ONE_WAY면 노란색(#fcd535), 아니면 회색
             color: positionMode === "ONE_WAY" ? "#fcd535" : "#848e9c",
             borderBottom:
               positionMode === "ONE_WAY" ? "2px solid #fcd535" : "none",
@@ -89,7 +85,6 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
           onClick={() => changePositionMode("HEDGE")}
           style={{
             ...styles.modeBtn,
-            // 현재 모드가 HEDGE면 노란색(#fcd535), 아니면 회색
             color: positionMode === "HEDGE" ? "#fcd535" : "#848e9c",
             borderBottom:
               positionMode === "HEDGE" ? "2px solid #fcd535" : "none",
@@ -192,7 +187,6 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
             cursor: loading ? "not-allowed" : "pointer",
           }}
         >
-          {/* ✅ 모드에 따라 텍스트 변경 */}
           {loading
             ? "..."
             : positionMode === "HEDGE"
@@ -209,7 +203,6 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
             cursor: loading ? "not-allowed" : "pointer",
           }}
         >
-          {/* ✅ 모드에 따라 텍스트 변경 */}
           {loading
             ? "..."
             : positionMode === "HEDGE"
@@ -218,7 +211,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
         </button>
       </div>
 
-      {/* 6. 최종 확인 모달 (기존 유지) */}
+      {/* 6. 최종 확인 모달 */}
       {showModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
@@ -228,7 +221,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
                 marginBottom: "15px",
               }}
             >
-              Confirm {side} Order ({positionMode}) {/* ✅ 제목에 모드 표시 */}
+              Confirm {side} Order ({positionMode})
             </h3>
             <div style={styles.confirmRow}>
               <span>Symbol:</span> <strong>BTCUSDT</strong>
@@ -288,7 +281,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: "#131722",
     boxSizing: "border-box",
   },
-  // 🆕 모드 탭 스타일
   modeTabContainer: {
     display: "flex",
     gap: "15px",
