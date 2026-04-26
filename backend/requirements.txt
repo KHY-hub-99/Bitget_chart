@@ -1,6 +1,19 @@
-fastapi
-uvicorn
-pandas
-pandas-ta
-ccxt
-python-dotenv
+# ==========================================
+# Crypto Trading Master Dashboard - Backend
+# ==========================================
+
+# 전략 및 지표 계산 핵심 라이브러리
+pandas==2.2.1
+# 반드시 하이픈(-)을 사용해야 설치됩니다.
+pandas-ta==0.3.14b0
+numpy==1.26.4
+
+# API 서버 및 통신
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+pydantic==2.6.4
+websockets==12.0
+
+# 거래소 연동 및 환경 설정
+ccxt==4.2.88
+python-dotenv==1.0.1
