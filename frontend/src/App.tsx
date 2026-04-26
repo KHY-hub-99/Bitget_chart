@@ -49,7 +49,7 @@ function App() {
 
   const [symbol, setSymbol] = useState<string>("BTCUSDT");
   const [timeframe, setTimeframe] = useState<string>("15m");
-  const [days, setDays] = useState<number>(365); // [수정] 기본 데이터 범위를 365일로 변경
+  const [days, setDays] = useState<number>(365); // 기본 데이터 범위 365일
 
   const [inputSymbol, setInputSymbol] = useState<string>("BTCUSDT");
   const [inputTimeframe, setInputTimeframe] = useState<string>("15m");
@@ -189,7 +189,15 @@ function App() {
           <h1 style={logoStyle}>
             Crypto Trading <span style={{ color: "#2962FF" }}>Master</span>
           </h1>
-          <nav style={{ display: "flex", gap: "5px" }}>
+          <nav
+            style={{
+              display: "flex",
+              gap: "8px",
+              backgroundColor: "#0b0e14",
+              padding: "4px",
+              borderRadius: "8px",
+            }}
+          >
             <button
               style={view === "chart" ? activeNavBtnStyle : navBtnStyle}
               onClick={() => setView("chart")}
@@ -213,11 +221,21 @@ function App() {
               : "rgba(239, 83, 80, 0.1)",
           }}
         >
+          <div
+            style={{
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              backgroundColor: isLive ? "#26a69a" : "#ef5350",
+              boxShadow: isLive ? "0 0 8px #26a69a" : "none",
+            }}
+          ></div>
           <span
             style={{
               color: isLive ? "#26a69a" : "#ef5350",
-              fontSize: "0.8rem",
-              fontWeight: 600,
+              fontSize: "0.75rem",
+              fontWeight: 700,
+              letterSpacing: "0.5px",
             }}
           >
             {isLive ? "LIVE" : "OFFLINE"}
@@ -239,7 +257,7 @@ function App() {
           >
             <div style={toolbarStyle}>
               <div style={filterGroupStyle}>
-                <span style={labelStyle}>Market:</span>
+                <span style={labelStyle}>Market</span>
                 <select
                   style={selectStyle}
                   value={inputSymbol}
@@ -250,13 +268,12 @@ function App() {
                 </select>
               </div>
               <div style={filterGroupStyle}>
-                <span style={labelStyle}>Time:</span>
+                <span style={labelStyle}>Time</span>
                 <select
                   style={selectStyle}
                   value={inputTimeframe}
                   onChange={(e) => setInputTimeframe(e.target.value)}
                 >
-                  {/* [수정] 지정된 타임프레임 옵션만 노출 */}
                   <option value="15m">15m</option>
                   <option value="1h">1h</option>
                   <option value="4h">4h</option>
@@ -276,6 +293,7 @@ function App() {
                     type="checkbox"
                     checked={isVisible}
                     onChange={() => toggleLayer(key as any)}
+                    style={{ cursor: "pointer" }}
                   />
                   {key.toUpperCase()}
                 </label>
@@ -295,7 +313,12 @@ function App() {
                   <h3 style={{ color: "#ef5350" }}>{error}</h3>
                 </div>
               ) : isLoading || !chartData ? (
-                <div style={centerMsgStyle}>LOADING...</div>
+                <div style={centerMsgStyle}>
+                  <div className="loading-spinner"></div>
+                  <p style={{ marginTop: "10px", color: "#848e9c" }}>
+                    데이터를 불러오는 중...
+                  </p>
+                </div>
               ) : (
                 <>
                   <div
@@ -366,24 +389,7 @@ function App() {
   );
 }
 
-// --- [ 스타일 설정 ] ---
-const navBtnStyle: React.CSSProperties = {
-  backgroundColor: "transparent",
-  color: "#848e9c",
-  border: "none",
-  padding: "8px 16px",
-  borderRadius: "4px",
-  cursor: "pointer",
-  fontSize: "0.9rem",
-  fontWeight: 600,
-  transition: "all 0.2s",
-};
-
-const activeNavBtnStyle: React.CSSProperties = {
-  ...navBtnStyle,
-  color: "#2962FF",
-  backgroundColor: "rgba(41, 98, 255, 0.1)",
-};
+// --- [ 세련된 블랙 & 블루 스타일 설정 ] ---
 
 const appContainerStyle: React.CSSProperties = {
   width: "100vw",
@@ -392,21 +398,11 @@ const appContainerStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   overflow: "hidden",
+  fontFamily: "'Inter', sans-serif",
 };
-const mainStyle: React.CSSProperties = {
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
-  overflow: "hidden",
-};
-const bottomSectionStyle: React.CSSProperties = {
-  flex: 1,
-  display: "flex",
-  borderTop: "1px solid #2a2e39",
-  minHeight: "250px",
-};
+
 const headerStyle: React.CSSProperties = {
-  height: "60px",
+  height: "64px",
   padding: "0 24px",
   backgroundColor: "#131722",
   borderBottom: "1px solid #2a2e39",
@@ -414,77 +410,134 @@ const headerStyle: React.CSSProperties = {
   justifyContent: "space-between",
   alignItems: "center",
   flexShrink: 0,
+  boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
 };
+
 const logoStyle: React.CSSProperties = {
   margin: 0,
-  color: "#d1d4dc",
-  fontSize: "1.1rem",
+  color: "#ffffff",
+  fontSize: "1.2rem",
+  fontWeight: 800,
+  letterSpacing: "-0.5px",
+};
+
+const navBtnStyle: React.CSSProperties = {
+  backgroundColor: "transparent",
+  color: "#848e9c",
+  border: "none",
+  padding: "8px 20px",
+  borderRadius: "6px",
+  cursor: "pointer",
+  fontSize: "0.85rem",
   fontWeight: 600,
+  transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
 };
-const statusBadgeStyle: React.CSSProperties = {
+
+const activeNavBtnStyle: React.CSSProperties = {
+  ...navBtnStyle,
+  color: "#ffffff",
+  backgroundColor: "#2962FF",
+  boxShadow: "0 2px 8px rgba(41, 98, 255, 0.4)",
+};
+
+const mainStyle: React.CSSProperties = {
+  flex: 1,
   display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  padding: "6px 12px",
-  borderRadius: "20px",
+  flexDirection: "column",
+  overflow: "hidden",
 };
+
 const toolbarStyle: React.CSSProperties = {
   padding: "12px 24px",
   backgroundColor: "#131722",
   borderBottom: "1px solid #2a2e39",
   display: "flex",
-  gap: "20px",
+  gap: "24px",
   alignItems: "center",
   flexShrink: 0,
 };
+
 const filterGroupStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  gap: "8px",
+  gap: "10px",
 };
+
 const labelStyle: React.CSSProperties = {
   color: "#848e9c",
-  fontSize: "0.85rem",
+  fontSize: "0.75rem",
+  fontWeight: 700,
+  textTransform: "uppercase",
+  letterSpacing: "0.5px",
 };
+
 const selectStyle: React.CSSProperties = {
   backgroundColor: "#1e222d",
-  color: "#d1d4dc",
-  border: "1px solid #2a2e39",
+  color: "#ffffff",
+  border: "1px solid #363c4e",
   padding: "6px 12px",
   borderRadius: "6px",
   outline: "none",
   cursor: "pointer",
   fontSize: "0.85rem",
+  fontWeight: 600,
+  transition: "border-color 0.2s",
 };
+
 const btnStyle: React.CSSProperties = {
   backgroundColor: "#2962FF",
   color: "#ffffff",
   border: "none",
-  padding: "6px 16px",
+  padding: "8px 20px",
   borderRadius: "6px",
   cursor: "pointer",
   fontSize: "0.85rem",
-  fontWeight: 600,
+  fontWeight: 700,
+  transition: "all 0.2s",
+  boxShadow: "0 4px 12px rgba(41, 98, 255, 0.3)",
 };
+
 const layerToggleStyle: React.CSSProperties = {
   padding: "8px 24px",
   backgroundColor: "#131722",
   borderBottom: "1px solid #2a2e39",
   display: "flex",
-  gap: "10px",
+  gap: "12px",
   flexShrink: 0,
 };
+
 const checkboxLabelStyle: React.CSSProperties = {
-  color: "#848e9c",
-  fontSize: "0.8rem",
+  color: "#d1d4dc",
+  fontSize: "0.75rem",
+  fontWeight: 600,
   cursor: "pointer",
   display: "flex",
   alignItems: "center",
   gap: "6px",
-  padding: "4px 8px",
+  padding: "4px 10px",
   borderRadius: "4px",
   backgroundColor: "#1e222d",
+  border: "1px solid #2a2e39",
+  transition: "background-color 0.2s",
 };
+
+const statusBadgeStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "6px 14px",
+  borderRadius: "20px",
+  border: "1px solid rgba(255,255,255,0.05)",
+};
+
+const bottomSectionStyle: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  borderTop: "1px solid #2a2e39",
+  minHeight: "250px",
+  backgroundColor: "#131722",
+};
+
 const centerMsgStyle: React.CSSProperties = {
   margin: "auto",
   textAlign: "center",

@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { analysisApi } from "../api";
 
 interface ReplayControlProps {
-  initialSymbol: string; // App에서 넘겨주는 기본값
-  initialTimeframe: string; // App에서 넘겨주는 기본값
+  initialSymbol: string;
+  initialTimeframe: string;
 }
 
 export const ReplayControl: React.FC<ReplayControlProps> = ({
@@ -13,7 +13,6 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
   const [logs, setLogs] = useState<string[]>([]);
   const [days, setDays] = useState<number>(365);
 
-  // [추가] 시뮬레이션 및 데이터 저장을 위한 독립적 선택 상태
   const [selectedSymbol, setSelectedSymbol] = useState<string>(initialSymbol);
   const [selectedTimeframe, setSelectedTimeframe] =
     useState<string>(initialTimeframe);
@@ -24,7 +23,6 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
   const logEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
-  // 실시간 로그 웹소켓 연결
   useEffect(() => {
     let reconnectTimeout: number;
     const connectSocket = () => {
@@ -49,7 +47,6 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  // 전체 시뮬레이션 실행 (선택된 symbol, timeframe 사용)
   const handleStartSimulation = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (isSimulating) return;
@@ -57,7 +54,7 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
     setIsSimulating(true);
     setLogs((prev) => [
       ...prev,
-      `[${selectedSymbol} | ${selectedTimeframe}] 시뮬레이션 시작 요청...`,
+      `[${selectedSymbol} | ${selectedTimeframe}] 전체 시뮬레이션 시작...`,
     ]);
 
     try {
@@ -69,7 +66,6 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
     }
   };
 
-  // 과거 데이터 동기화 (선택된 symbol, timeframe 사용)
   const handleSyncHistorical = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (isSyncing) return;
@@ -101,46 +97,52 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
   return (
     <div style={containerStyle}>
       <div style={controlBarStyle}>
-        {/* 대상 선택 영역 */}
+        {/* 왼쪽: 컨트롤 그룹 */}
         <div style={inputGroupStyle}>
-          <span style={labelStyle}>대상:</span>
-          <select
-            value={selectedSymbol}
-            onChange={(e) => setSelectedSymbol(e.target.value)}
-            style={innerSelectStyle}
-          >
-            <option value="BTCUSDT">BTCUSDT</option>
-            <option value="ETHUSDT">ETHUSDT</option>
-          </select>
-          <select
-            value={selectedTimeframe}
-            onChange={(e) => setSelectedTimeframe(e.target.value)}
-            style={innerSelectStyle}
-          >
-            <option value="15m">15m</option>
-            <option value="1h">1h</option>
-            <option value="4h">4h</option>
-            <option value="1d">1d</option>
-            <option value="1w">1w</option>
-          </select>
+          <div style={fieldGroup}>
+            <span style={labelStyle}>Target</span>
+            <select
+              value={selectedSymbol}
+              onChange={(e) => setSelectedSymbol(e.target.value)}
+              style={innerSelectStyle}
+            >
+              <option value="BTCUSDT">BTCUSDT</option>
+              <option value="ETHUSDT">ETHUSDT</option>
+            </select>
+            <select
+              value={selectedTimeframe}
+              onChange={(e) => setSelectedTimeframe(e.target.value)}
+              style={innerSelectStyle}
+            >
+              <option value="15m">15m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+              <option value="1w">1w</option>
+            </select>
+          </div>
 
-          <span style={{ ...labelStyle, marginLeft: "10px" }}>기간(일):</span>
-          <input
-            type="number"
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-            style={inputStyle}
-          />
+          <div style={fieldGroup}>
+            <span style={labelStyle}>Range(Days)</span>
+            <input
+              type="number"
+              value={days}
+              onChange={(e) => setDays(Number(e.target.value))}
+              style={inputStyle}
+            />
+          </div>
+
           <button
             type="button"
             onClick={handleSyncHistorical}
             disabled={isSyncing}
             style={isSyncing ? disabledBtnStyle : syncBtnStyle}
           >
-            {isSyncing ? "수집 중..." : "데이터 저장"}
+            {isSyncing ? "Syncing..." : "데이터 저장"}
           </button>
         </div>
 
+        {/* 오른쪽: 액션 버튼 그룹 */}
         <div style={{ display: "flex", gap: "10px" }}>
           <button
             type="button"
@@ -159,14 +161,27 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
       {/* 로그 터미널 */}
       <div style={terminalStyle}>
         <div style={terminalHeaderStyle}>
-          <span>Real-time Strategy Optimizer Logs</span>
-          <span style={{ color: "#2962FF", fontWeight: "bold" }}>
-            대상: {selectedSymbol} | {selectedTimeframe}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <div style={pulseDot}></div>
+            <span style={{ fontWeight: 600 }}>STRATEGY OPTIMIZER LOGS</span>
+          </div>
+          <span
+            style={{ color: "#2962FF", fontWeight: 700, fontSize: "0.7rem" }}
+          >
+            CONFIG: {selectedSymbol} / {selectedTimeframe}
           </span>
         </div>
         <div style={logAreaStyle}>
+          {logs.length === 0 && (
+            <div style={{ color: "#363c4e", fontStyle: "italic" }}>
+              대기 중... 작업을 시작하면 실시간 로그가 표시됩니다.
+            </div>
+          )}
           {logs.map((log, i) => (
             <div key={i} style={getLogItemStyle(log)}>
+              <span style={{ opacity: 0.5, marginRight: "8px" }}>
+                [{i + 1}]
+              </span>
               {log}
             </div>
           ))}
@@ -177,89 +192,155 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
   );
 };
 
-// --- [스타일 추가 및 수정] ---
-const innerSelectStyle: React.CSSProperties = {
-  backgroundColor: "#1e222d",
-  color: "#fff",
-  border: "1px solid #2a2e39",
-  padding: "5px 10px",
-  borderRadius: "4px",
-  fontSize: "0.85rem",
-  outline: "none",
-};
+// --- [ 블랙 & 블루 세련된 스타일 설정 ] ---
 
 const containerStyle: React.CSSProperties = {
-  padding: "20px 24px",
+  padding: "24px",
   backgroundColor: "#131722",
   display: "flex",
   flexDirection: "column",
-  gap: "15px",
+  gap: "20px",
   borderBottom: "1px solid #2a2e39",
 };
 
-// ... 기존 스타일 코드들 (controlBarStyle, terminalStyle 등) 동일 유지
 const controlBarStyle: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
-  alignItems: "center",
+  alignItems: "flex-end",
 };
+
+const inputGroupStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "flex-end",
+  gap: "20px",
+};
+
+const fieldGroup: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "8px",
+};
+
+const labelStyle: React.CSSProperties = {
+  color: "#848e9c",
+  fontSize: "0.7rem",
+  fontWeight: 700,
+  textTransform: "uppercase",
+  letterSpacing: "0.5px",
+};
+
+const innerSelectStyle: React.CSSProperties = {
+  backgroundColor: "#1e222d",
+  color: "#fff",
+  border: "1px solid #363c4e",
+  padding: "8px 12px",
+  borderRadius: "6px",
+  fontSize: "0.85rem",
+  fontWeight: 600,
+  outline: "none",
+  cursor: "pointer",
+  marginRight: "4px",
+};
+
+const inputStyle: React.CSSProperties = {
+  backgroundColor: "#1e222d",
+  color: "#fff",
+  border: "1px solid #363c4e",
+  padding: "8px 12px",
+  borderRadius: "6px",
+  width: "80px",
+  fontSize: "0.85rem",
+  fontWeight: 600,
+  outline: "none",
+};
+
+// 버튼 기본 스타일
+const baseBtn: React.CSSProperties = {
+  border: "none",
+  padding: "10px 20px",
+  borderRadius: "6px",
+  cursor: "pointer",
+  fontSize: "0.85rem",
+  fontWeight: 700,
+  transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const runBtnStyle: React.CSSProperties = {
+  ...baseBtn,
+  backgroundColor: "#2962FF",
+  color: "#fff",
+  boxShadow: "0 4px 12px rgba(41, 98, 255, 0.3)",
+};
+
+const syncBtnStyle: React.CSSProperties = {
+  ...baseBtn,
+  backgroundColor: "#f6465d",
+  color: "#fff",
+  boxShadow: "0 4px 12px rgba(246, 70, 93, 0.2)",
+};
+
+const clearBtnStyle: React.CSSProperties = {
+  ...baseBtn,
+  backgroundColor: "#2b3139",
+  color: "#d1d4dc",
+  border: "1px solid rgba(255,255,255,0.05)",
+};
+
+const disabledBtnStyle: React.CSSProperties = {
+  ...baseBtn,
+  backgroundColor: "#1e222d",
+  color: "#5d6673",
+  cursor: "not-allowed",
+  boxShadow: "none",
+};
+
+// 터미널 스타일
 const terminalStyle: React.CSSProperties = {
   backgroundColor: "#000",
-  borderRadius: "8px",
+  borderRadius: "10px",
   border: "1px solid #2a2e39",
   overflow: "hidden",
+  boxShadow: "inset 0 0 20px rgba(0,0,0,0.5)",
 };
+
 const terminalHeaderStyle: React.CSSProperties = {
-  padding: "8px 15px",
+  padding: "10px 16px",
   backgroundColor: "#1e222d",
   borderBottom: "1px solid #2a2e39",
-  fontSize: "0.75rem",
+  fontSize: "0.7rem",
   color: "#d1d4dc",
   display: "flex",
   justifyContent: "space-between",
+  alignItems: "center",
+  letterSpacing: "1px",
 };
+
 const logAreaStyle: React.CSSProperties = {
-  height: "200px",
-  padding: "15px",
+  height: "220px",
+  padding: "16px",
   overflowY: "auto",
-  fontFamily: "monospace",
-  fontSize: "0.85rem",
+  fontFamily: "'Fira Code', 'IBM Plex Mono', monospace",
+  fontSize: "0.8rem",
+  lineHeight: "1.6",
+  backgroundColor: "#050505",
 };
-const inputGroupStyle = { display: "flex", alignItems: "center", gap: "10px" };
-const labelStyle = { color: "#848e9c", fontSize: "0.85rem" };
-const inputStyle = {
-  backgroundColor: "#1e222d",
-  color: "#fff",
-  border: "1px solid #2a2e39",
-  padding: "6px 10px",
-  borderRadius: "4px",
-  width: "70px",
+
+const pulseDot: React.CSSProperties = {
+  width: "6px",
+  height: "6px",
+  backgroundColor: "#2962FF",
+  borderRadius: "50%",
+  boxShadow: "0 0 8px #2962FF",
 };
-const baseBtn = {
-  border: "none",
-  padding: "8px 16px",
-  borderRadius: "4px",
-  cursor: "pointer",
-  fontSize: "0.85rem",
-  fontWeight: 600,
-};
-const syncBtnStyle = { ...baseBtn, backgroundColor: "#E91E63", color: "#fff" };
-const runBtnStyle = { ...baseBtn, backgroundColor: "#2962FF", color: "#fff" };
-const clearBtnStyle = {
-  ...baseBtn,
-  backgroundColor: "#363c4e",
-  color: "#d1d4dc",
-};
-const disabledBtnStyle = {
-  ...baseBtn,
-  backgroundColor: "#555",
-  color: "#888",
-  cursor: "not-allowed",
-};
+
 const getLogItemStyle = (log: string): React.CSSProperties => {
   let color = "#d1d4dc";
   if (log.includes("TAKE_PROFIT")) color = "#26a69a";
   if (log.includes("STOP_LOSS")) color = "#ef5350";
   if (log.includes("[진행도]")) color = "#ffa726";
-  return { color, marginBottom: "4px" };
+  if (log.includes("성공") || log.includes("완료")) color = "#2962FF";
+  return { color, marginBottom: "6px", display: "flex" };
 };

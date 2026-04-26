@@ -13,7 +13,7 @@ const SimulationResultsPage: React.FC = () => {
   const [symbol, setSymbol] = useState<string>("ALL");
   const [timeframe, setTimeframe] = useState<string>("ALL");
 
-  // [추가] 모달 및 차트 상태 관리
+  // 모달 및 차트 상태 관리
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [replayLoading, setReplayLoading] = useState<boolean>(false);
   const [replayData, setReplayData] = useState<CandleData[]>([]);
@@ -25,7 +25,6 @@ const SimulationResultsPage: React.FC = () => {
   const loadRankings = async () => {
     setLoading(true);
     try {
-      // 선택된 필터값을 API로 전달
       const data = await analysisApi.getRanking(symbol, timeframe);
       setRankings(data);
     } catch (error) {
@@ -35,12 +34,10 @@ const SimulationResultsPage: React.FC = () => {
     }
   };
 
-  // 필터가 변경될 때마다 데이터 다시 불러오기
   useEffect(() => {
     loadRankings();
   }, [symbol, timeframe]);
 
-  // [추가] 행 클릭 시 해당 전략으로 Replay API 호출 및 모달 열기
   const handleRowClick = async (rank: StrategyRank) => {
     const targetSymbol = symbol === "ALL" ? "BTCUSDT" : symbol;
     const targetTimeframe = timeframe === "ALL" ? "15m" : timeframe;
@@ -59,11 +56,7 @@ const SimulationResultsPage: React.FC = () => {
         rank.sl_ratio,
       );
 
-      // ✅ [진짜 핵심 수정] response.data.candles 로 다시 되돌려줍니다!
-      // (백엔드에서 {"candles": [...], "volumes": [...]} 형태로 오기 때문)
       const rawData = response.data.candles || [];
-
-      // 시간 포맷 강제 변환 (안전장치)
       const formattedData = rawData.map((d: any) => ({
         ...d,
         time: d.time > 10000000000 ? Math.floor(d.time / 1000) : d.time,
@@ -87,8 +80,8 @@ const SimulationResultsPage: React.FC = () => {
         <div>
           <h2 style={titleStyle}>전략 성과 랭킹 보드</h2>
           <p style={subtitleStyle}>
-            최적의 수익성과 안정성을 가진 파라미터 조합을 탐색합니다. (행을
-            클릭하면 차트 복기가 열립니다)
+            최적의 수익성과 안정성을 가진 파라미터 조합을 탐색합니다. (행 클릭
+            시 상세 복기)
           </p>
         </div>
 
@@ -100,15 +93,9 @@ const SimulationResultsPage: React.FC = () => {
               onChange={(e) => setSymbol(e.target.value)}
               style={selectStyle}
             >
-              <option value="ALL" style={optionStyle}>
-                전체 심볼
-              </option>
-              <option value="BTCUSDT" style={optionStyle}>
-                BTCUSDT
-              </option>
-              <option value="ETHUSDT" style={optionStyle}>
-                ETHUSDT
-              </option>
+              <option value="ALL">ALL SYMBOLS</option>
+              <option value="BTCUSDT">BTCUSDT</option>
+              <option value="ETHUSDT">ETHUSDT</option>
             </select>
           </div>
 
@@ -119,24 +106,12 @@ const SimulationResultsPage: React.FC = () => {
               onChange={(e) => setTimeframe(e.target.value)}
               style={selectStyle}
             >
-              <option value="ALL" style={optionStyle}>
-                전체 시간
-              </option>
-              <option value="15m" style={optionStyle}>
-                15m
-              </option>
-              <option value="1h" style={optionStyle}>
-                1h
-              </option>
-              <option value="4h" style={optionStyle}>
-                4h
-              </option>
-              <option value="1d" style={optionStyle}>
-                1d
-              </option>
-              <option value="1w" style={optionStyle}>
-                1w
-              </option>
+              <option value="ALL">ALL TIMES</option>
+              <option value="15m">15M</option>
+              <option value="1h">1H</option>
+              <option value="4h">4H</option>
+              <option value="1d">1D</option>
+              <option value="1w">1W</option>
             </select>
           </div>
 
@@ -145,7 +120,7 @@ const SimulationResultsPage: React.FC = () => {
             disabled={loading}
             style={loading ? disabledBtnStyle : refreshBtnStyle}
           >
-            {loading ? "데이터 갱신 중..." : "새로고침"}
+            {loading ? "REFRESHING..." : "새로고침"}
           </button>
         </div>
       </div>
@@ -155,14 +130,14 @@ const SimulationResultsPage: React.FC = () => {
         <table style={tableStyle}>
           <thead>
             <tr>
-              <th style={thStyle}>Rank</th>
-              <th style={thStyle}>Mode / Lev</th>
-              <th style={thStyle}>TP / SL Ratio</th>
-              <th style={thStyle}>승/패 (청산)</th>
-              <th style={thStyle}>승률</th>
-              <th style={thStyle}>Avg MDD</th>
-              <th style={thStyle}>Max Drawdown</th>
-              <th style={{ ...thStyle, textAlign: "right" }}>Total PNL</th>
+              <th style={thStyle}>RANK</th>
+              <th style={thStyle}>MODE / LEV</th>
+              <th style={thStyle}>TP / SL RATIO</th>
+              <th style={thStyle}>W/L (LIQ)</th>
+              <th style={thStyle}>WIN RATE</th>
+              <th style={thStyle}>AVG MDD</th>
+              <th style={thStyle}>MAX DRAWDOWN</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>TOTAL PNL</th>
             </tr>
           </thead>
           <tbody>
@@ -184,17 +159,20 @@ const SimulationResultsPage: React.FC = () => {
                 return (
                   <tr
                     key={index}
+                    className="ranking-row"
                     style={index < 3 ? topRankRowStyle : rowStyle}
-                    onClick={() => handleRowClick(rank)} // 클릭 이벤트 바인딩
+                    onClick={() => handleRowClick(rank)}
                   >
                     <td style={tdStyle}>
-                      {index === 0
-                        ? "🥇"
-                        : index === 1
-                          ? "🥈"
-                          : index === 2
-                            ? "🥉"
-                            : `${index + 1}`}
+                      <span style={index < 3 ? medalStyle : rankNumStyle}>
+                        {index === 0
+                          ? "1st"
+                          : index === 1
+                            ? "2nd"
+                            : index === 2
+                              ? "3rd"
+                              : index + 1}
+                      </span>
                     </td>
                     <td style={tdStyle}>
                       <div
@@ -217,54 +195,60 @@ const SimulationResultsPage: React.FC = () => {
                       </div>
                     </td>
                     <td style={tdStyle}>
-                      <span style={{ color: "#26a69a", fontWeight: "bold" }}>
+                      <span style={{ color: "#26a69a", fontWeight: 700 }}>
                         {(rank.tp_ratio * 100).toFixed(1)}%
                       </span>
-                      <span style={{ color: "#848e9c", margin: "0 4px" }}>
+                      <span style={{ color: "#363c4e", margin: "0 6px" }}>
                         /
                       </span>
-                      <span style={{ color: "#ef5350", fontWeight: "bold" }}>
+                      <span style={{ color: "#ef5350", fontWeight: 700 }}>
                         {(rank.sl_ratio * 100).toFixed(1)}%
                       </span>
                     </td>
                     <td style={tdStyle}>
-                      <span style={{ color: "#26a69a" }}>{rank.wins}</span> /
-                      <span style={{ color: "#848e9c" }}> {rank.losses}</span>
+                      <span style={{ color: "#26a69a", fontWeight: 600 }}>
+                        {rank.wins}
+                      </span>
+                      <span style={{ color: "#848e9c" }}> / {rank.losses}</span>
                       {rank.liquidations > 0 && (
-                        <span
-                          style={{
-                            color: "#ef5350",
-                            fontSize: "0.75rem",
-                            marginLeft: "4px",
-                          }}
-                        >
-                          (청산 {rank.liquidations})
-                        </span>
+                        <span style={liqBadgeStyle}>({rank.liquidations})</span>
                       )}
                     </td>
                     <td style={tdStyle}>
-                      <span
+                      <div
                         style={{
-                          color: Number(winRate) >= 50 ? "#26a69a" : "#d1d4dc",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
                         }}
                       >
-                        {winRate}%
-                      </span>
+                        <div style={winRateTrack}>
+                          <div
+                            style={{ ...winRateBar, width: `${winRate}%` }}
+                          ></div>
+                        </div>
+                        <span
+                          style={{
+                            color:
+                              Number(winRate) >= 50 ? "#26a69a" : "#d1d4dc",
+                            fontWeight: 700,
+                            fontSize: "0.8rem",
+                          }}
+                        >
+                          {winRate}%
+                        </span>
+                      </div>
                     </td>
                     <td
                       style={{
                         ...tdStyle,
-                        color: rank.avg_mdd_rate < -20 ? "#ef5350" : "#d1d4dc",
+                        color: rank.avg_mdd_rate < -10 ? "#ef5350" : "#d1d4dc",
                       }}
                     >
                       {rank.avg_mdd_rate?.toFixed(2)}%
                     </td>
                     <td
-                      style={{
-                        ...tdStyle,
-                        color: rank.max_drawdown < -50 ? "#ef5350" : "#ffa726",
-                        fontWeight: "bold",
-                      }}
+                      style={{ ...tdStyle, color: "#ffa726", fontWeight: 700 }}
                     >
                       {rank.max_drawdown?.toFixed(2)}%
                     </td>
@@ -273,7 +257,7 @@ const SimulationResultsPage: React.FC = () => {
                         ...tdStyle,
                         textAlign: "right",
                         color: rank.total_pnl >= 0 ? "#26a69a" : "#ef5350",
-                        fontWeight: "bold",
+                        fontWeight: 800,
                         fontSize: "1rem",
                       }}
                     >
@@ -287,34 +271,30 @@ const SimulationResultsPage: React.FC = () => {
         </table>
       </div>
 
-      {/* 3. [추가] 차트 복기 모달(Modal) 창 */}
+      {/* 3. 차트 복기 모달 창 */}
       {isModalOpen && (
         <div style={modalOverlayStyle} onClick={() => setIsModalOpen(false)}>
           <div style={modalContentStyle} onClick={(e) => e.stopPropagation()}>
             <div style={modalHeaderStyle}>
-              <h3
-                style={{
-                  margin: 0,
-                  color: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                }}
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: "4px" }}
               >
-                전략 복기 차트
+                <h3 style={{ margin: 0, color: "#fff", fontSize: "1.1rem" }}>
+                  전략 복기 리플레이
+                </h3>
                 <span
                   style={{
-                    color: "#848e9c",
-                    fontSize: "0.9rem",
-                    marginLeft: "10px",
-                    fontWeight: "normal",
+                    color: "#2962FF",
+                    fontSize: "0.75rem",
+                    fontWeight: 700,
                   }}
                 >
-                  ({selectedStrategy?.position_mode} |{" "}
-                  {selectedStrategy?.leverage}x | TP{" "}
+                  CONFIG: {selectedStrategy?.position_mode} |{" "}
+                  {selectedStrategy?.leverage}X | TP{" "}
                   {(selectedStrategy?.tp_ratio || 0) * 100}% | SL{" "}
-                  {(selectedStrategy?.sl_ratio || 0) * 100}%)
+                  {(selectedStrategy?.sl_ratio || 0) * 100}%
                 </span>
-              </h3>
+              </div>
               <button
                 style={closeBtnStyle}
                 onClick={() => setIsModalOpen(false)}
@@ -323,18 +303,13 @@ const SimulationResultsPage: React.FC = () => {
               </button>
             </div>
 
-            <div style={{ padding: "20px" }}>
+            <div style={{ padding: "24px", backgroundColor: "#0b0e14" }}>
               {replayLoading ? (
-                <div
-                  style={{
-                    height: "500px",
-                    display: "flex",
-                    justifyContent: "center",
-                    alignItems: "center",
-                    color: "#848e9c",
-                  }}
-                >
-                  서버에서 차트와 타점 데이터를 생성 중입니다...
+                <div style={loaderContainerStyle}>
+                  <div className="loading-spinner"></div>
+                  <p style={{ marginTop: "15px" }}>
+                    시뮬레이션 타점을 계산하는 중...
+                  </p>
                 </div>
               ) : (
                 <SimulationReplayChart
@@ -350,13 +325,15 @@ const SimulationResultsPage: React.FC = () => {
   );
 };
 
-// --- [ 세련된 스타일 정의 ] ---
+// --- [ 세련된 블랙 & 블루 스타일 설정 ] ---
+
 const pageContainerStyle: React.CSSProperties = {
   padding: "24px",
   backgroundColor: "#0b0e14",
   flex: 1,
   color: "#d1d4dc",
   minHeight: "100vh",
+  fontFamily: "'Inter', sans-serif",
 };
 
 const headerCardStyle: React.CSSProperties = {
@@ -364,62 +341,56 @@ const headerCardStyle: React.CSSProperties = {
   justifyContent: "space-between",
   alignItems: "center",
   backgroundColor: "#131722",
-  padding: "20px 24px",
+  padding: "24px",
   borderRadius: "12px",
   border: "1px solid #2a2e39",
   marginBottom: "24px",
-  boxShadow: "0 4px 6px rgba(0, 0, 0, 0.3)",
+  boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
 };
 
 const titleStyle: React.CSSProperties = {
   margin: 0,
-  fontSize: "1.4rem",
+  fontSize: "1.3rem",
   color: "#fff",
+  fontWeight: 800,
 };
 const subtitleStyle: React.CSSProperties = {
   margin: "6px 0 0 0",
-  fontSize: "0.85rem",
+  fontSize: "0.8rem",
   color: "#848e9c",
+  fontWeight: 500,
 };
 
 const controlsContainerStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  gap: "16px",
+  gap: "12px",
 };
 
 const filterGroupStyle: React.CSSProperties = {
   display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  backgroundColor: "#1e222d",
-  padding: "6px 12px",
-  borderRadius: "8px",
-  border: "1px solid #2a2e39",
+  flexDirection: "column",
+  gap: "6px",
 };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: "0.8rem",
-  color: "#848e9c",
-  fontWeight: "bold",
+  fontSize: "0.65rem",
+  color: "#2962FF",
+  fontWeight: 800,
+  textTransform: "uppercase",
+  letterSpacing: "1px",
 };
 
 const selectStyle: React.CSSProperties = {
-  backgroundColor: "#1e222d", // 투명 대신 명시적 배경색
-  color: "#fff",
-  border: "none",
-  outline: "none",
-  cursor: "pointer",
-  fontSize: "0.9rem",
-  fontWeight: 600,
-  appearance: "none", // 브라우저 기본 화살표 제거 (필요시)
-  padding: "2px 4px",
-};
-
-// option 태그에 적용할 스타일 (일축해서 select 내부에서 사용)
-const optionStyle = {
   backgroundColor: "#1e222d",
   color: "#fff",
+  border: "1px solid #363c4e",
+  padding: "8px 12px",
+  borderRadius: "6px",
+  outline: "none",
+  cursor: "pointer",
+  fontSize: "0.85rem",
+  fontWeight: 600,
 };
 
 const tableWrapperStyle: React.CSSProperties = {
@@ -427,13 +398,13 @@ const tableWrapperStyle: React.CSSProperties = {
   borderRadius: "12px",
   border: "1px solid #2a2e39",
   overflow: "hidden",
-  boxShadow: "0 4px 6px rgba(0, 0, 0, 0.3)",
+  boxShadow: "0 10px 30px rgba(0, 0, 0, 0.5)",
 };
 
 const tableStyle: React.CSSProperties = {
   width: "100%",
   borderCollapse: "collapse",
-  fontSize: "0.9rem",
+  fontSize: "0.85rem",
 };
 
 const thStyle: React.CSSProperties = {
@@ -442,7 +413,9 @@ const thStyle: React.CSSProperties = {
   textAlign: "left",
   borderBottom: "1px solid #2a2e39",
   color: "#848e9c",
-  fontWeight: 600,
+  fontWeight: 700,
+  fontSize: "0.75rem",
+  letterSpacing: "1px",
 };
 
 const tdStyle: React.CSSProperties = {
@@ -451,113 +424,141 @@ const tdStyle: React.CSSProperties = {
   verticalAlign: "middle",
 };
 
-// [수정] 행 클릭을 유도하는 커서 포인터 추가
 const rowStyle: React.CSSProperties = {
-  transition: "background-color 0.2s",
+  transition: "all 0.2s",
   cursor: "pointer",
 };
 const topRankRowStyle: React.CSSProperties = {
   ...rowStyle,
-  backgroundColor: "rgba(41, 98, 255, 0.08)", // 상위 랭크 하이라이트
+  backgroundColor: "rgba(41, 98, 255, 0.03)",
 };
 
-const emptyTdStyle: React.CSSProperties = {
-  padding: "60px",
-  textAlign: "center",
-  color: "#848e9c",
-  fontSize: "1rem",
-};
-
-const badgeStyle: React.CSSProperties = {
-  padding: "4px 8px",
-  borderRadius: "6px",
-  fontSize: "0.75rem",
-  fontWeight: "bold",
-  letterSpacing: "0.5px",
-};
-
-const hedgeBadgeStyle = {
-  ...badgeStyle,
-  backgroundColor: "rgba(255, 167, 38, 0.15)",
-  color: "#ffa726",
-  border: "1px solid rgba(255, 167, 38, 0.3)",
-};
-const oneWayBadgeStyle = {
-  ...badgeStyle,
-  backgroundColor: "rgba(41, 98, 255, 0.15)",
+const medalStyle: React.CSSProperties = {
   color: "#2962FF",
-  border: "1px solid rgba(41, 98, 255, 0.3)",
+  fontWeight: 900,
+  fontSize: "0.9rem",
+};
+const rankNumStyle: React.CSSProperties = { color: "#5d6673", fontWeight: 700 };
+
+const hedgeBadgeStyle: React.CSSProperties = {
+  padding: "4px 8px",
+  borderRadius: "4px",
+  fontSize: "0.7rem",
+  fontWeight: 800,
+  backgroundColor: "rgba(255, 167, 38, 0.1)",
+  color: "#ffa726",
+  border: "1px solid rgba(255, 167, 38, 0.2)",
+};
+const oneWayBadgeStyle: React.CSSProperties = {
+  padding: "4px 8px",
+  borderRadius: "4px",
+  fontSize: "0.7rem",
+  fontWeight: 800,
+  backgroundColor: "rgba(41, 98, 255, 0.1)",
+  color: "#2962FF",
+  border: "1px solid rgba(41, 98, 255, 0.2)",
+};
+const leverageStyle: React.CSSProperties = {
+  backgroundColor: "#1e222d",
+  padding: "4px 6px",
+  borderRadius: "4px",
+  fontSize: "0.7rem",
+  fontWeight: 700,
+  color: "#fff",
+};
+const liqBadgeStyle: React.CSSProperties = {
+  color: "#ef5350",
+  fontSize: "0.7rem",
+  fontWeight: 700,
+  marginLeft: "6px",
 };
 
-const leverageStyle: React.CSSProperties = {
-  backgroundColor: "#2a2e39",
-  padding: "4px 8px",
-  borderRadius: "6px",
-  fontSize: "0.75rem",
-  fontWeight: "bold",
-  color: "#d1d4dc",
+const winRateTrack: React.CSSProperties = {
+  width: "60px",
+  height: "4px",
+  backgroundColor: "#1e222d",
+  borderRadius: "2px",
+  overflow: "hidden",
+};
+const winRateBar: React.CSSProperties = {
+  height: "100%",
+  backgroundColor: "#26a69a",
 };
 
 const refreshBtnStyle: React.CSSProperties = {
   backgroundColor: "#2962FF",
   color: "#fff",
   border: "none",
-  padding: "10px 20px",
+  padding: "10px 24px",
   borderRadius: "8px",
   cursor: "pointer",
-  fontSize: "0.9rem",
-  fontWeight: "bold",
-  transition: "background-color 0.2s",
+  fontSize: "0.85rem",
+  fontWeight: 800,
+  transition: "all 0.2s",
+  boxShadow: "0 4px 12px rgba(41, 98, 255, 0.3)",
+  marginTop: "16px",
 };
 
-const disabledBtnStyle = {
+const disabledBtnStyle: React.CSSProperties = {
   ...refreshBtnStyle,
-  backgroundColor: "#2a2e39",
-  color: "#848e9c",
+  backgroundColor: "#2b3139",
+  color: "#5d6673",
+  boxShadow: "none",
   cursor: "not-allowed",
 };
 
-// --- [추가] 모달 전용 스타일 ---
 const modalOverlayStyle: React.CSSProperties = {
   position: "fixed",
   top: 0,
   left: 0,
   width: "100%",
   height: "100%",
-  backgroundColor: "rgba(0, 0, 0, 0.7)",
+  backgroundColor: "rgba(0, 0, 0, 0.85)",
   display: "flex",
   justifyContent: "center",
   alignItems: "center",
   zIndex: 1000,
-  backdropFilter: "blur(4px)",
+  backdropFilter: "blur(8px)",
 };
-
 const modalContentStyle: React.CSSProperties = {
   backgroundColor: "#131722",
-  width: "90%",
-  maxWidth: "1200px",
-  borderRadius: "12px",
+  width: "95%",
+  maxWidth: "1300px",
+  borderRadius: "16px",
   border: "1px solid #2a2e39",
-  boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
-  display: "flex",
-  flexDirection: "column",
+  boxShadow: "0 20px 60px rgba(0,0,0,0.8)",
+  overflow: "hidden",
 };
-
 const modalHeaderStyle: React.CSSProperties = {
-  padding: "16px 20px",
+  padding: "20px 24px",
   borderBottom: "1px solid #2a2e39",
   display: "flex",
   justifyContent: "space-between",
   alignItems: "center",
+  backgroundColor: "#181a20",
 };
-
 const closeBtnStyle: React.CSSProperties = {
   background: "none",
   border: "none",
   color: "#848e9c",
   fontSize: "1.5rem",
   cursor: "pointer",
-  lineHeight: 1,
+};
+const loaderContainerStyle: React.CSSProperties = {
+  height: "500px",
+  display: "flex",
+  flexDirection: "column",
+  justifyContent: "center",
+  alignItems: "center",
+  color: "#848e9c",
+  fontWeight: 600,
+};
+const emptyTdStyle: React.CSSProperties = {
+  padding: "80px",
+  textAlign: "center",
+  color: "#5d6673",
+  fontSize: "1rem",
+  fontWeight: 600,
 };
 
 export default SimulationResultsPage;

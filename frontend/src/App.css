@@ -1,5 +1,21 @@
-/* 폰트 및 기본 초기화 (기존 유지) */
+/* ========================================
+    고품격 블랙 & 블루 테마 정의
+   ======================================== */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap");
+
+:root {
+  --bg-main: #0b0e11;
+  --bg-surface: #131722;
+  --bg-input: #1e222d;
+  --color-primary: #2962ff;
+  --color-success: #26a69a;
+  --color-danger: #ef5350;
+  --color-warning: #ffa726;
+  --border-main: #2a2e39;
+  --text-main: #ffffff;
+  --text-dim: #848e9c;
+  --shadow-blue: 0 4px 12px rgba(41, 98, 255, 0.3);
+}
 
 * {
   margin: 0;
@@ -12,8 +28,8 @@ body,
 #root {
   width: 100%;
   height: 100%;
-  background-color: #0b0e11;
-  color: #d1d4dc;
+  background-color: var(--bg-main);
+  color: var(--text-main);
   overflow: hidden;
 }
 
@@ -26,7 +42,7 @@ body {
 }
 
 /* ========================================
-    ✨ 추가: 공통 클래스 및 유틸리티
+    유틸리티 & 스크롤바
    ======================================== */
 
 .tabular-nums {
@@ -34,29 +50,26 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* 버튼 클릭 피드백 */
-button:active {
-  transform: scale(0.98);
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
 }
 
-/* 스크롤바 디자인 (기존 유지) */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
 ::-webkit-scrollbar-track {
-  background: #131722;
+  background: var(--bg-surface);
 }
+
 ::-webkit-scrollbar-thumb {
-  background: #2a2e39;
+  background: var(--border-main);
   border-radius: 10px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: #363c4e;
 }
 
 /* ========================================
-    🚀 레이아웃 수정 (최적화 버전)
+    레이아웃 엔진
    ======================================== */
 
 .app-main {
@@ -70,21 +83,20 @@ button:active {
   flex: 1;
   position: relative;
   min-height: 400px;
-  background-color: #131722;
-  border-bottom: 1px solid #1e222d;
+  background-color: var(--bg-surface);
+  border-bottom: 1px solid var(--border-main);
 }
 
 .bottom-section {
   display: flex;
   flex-direction: row;
-  height: 38vh; /* 조금 더 확보 */
-  min-height: 320px;
+  height: 35vh;
+  min-height: 280px;
   background-color: #161a1e;
-  border-top: 1px solid #2b3139;
+  border-top: 1px solid var(--border-main);
   flex-shrink: 0;
 }
 
-/* 포지션 테이블 헤더 고정 (중요!) */
 .position-section {
   flex: 1;
   overflow-y: auto;
@@ -92,68 +104,120 @@ button:active {
   position: relative;
 }
 
-/* 테이블 제목줄(thead) 스크롤 시 상단 고정 */
-.position-section table thead {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  background-color: #161a1e;
-}
-
 .order-section {
-  width: 320px; /* 표준 거래소 너비 */
+  width: 320px;
   min-width: 320px;
-  border-left: 1px solid #2b3139;
+  border-left: 1px solid var(--border-main);
   display: flex;
   flex-direction: column;
-  background-color: #131722;
+  background-color: var(--bg-surface);
   overflow-y: auto;
 }
 
 /* ========================================
-    🎨 컴포넌트 디테일 스타일
+    세련된 버튼 시스템 (블랙 & 블루)
    ======================================== */
 
-/* 라이브 상태 배지 애니메이션 */
-.status-badge.live::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  background-color: #26a69a;
-  border-radius: 50%;
-  margin-right: 6px;
-  animation: blink 1.5s infinite;
+button {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
 }
 
-@keyframes blink {
-  0% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-  100% {
-    opacity: 1;
-  }
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.15);
 }
 
-/* 주문 패널 입력창 포커스 효과 */
-.order-section input:focus {
-  border-color: #2962ff !important;
+button:active:not(:disabled) {
+  transform: translateY(0px) scale(0.98);
+  filter: brightness(0.9);
+}
+
+/* 프라이머리 블루 버튼 */
+.primary-btn {
+  background-color: var(--color-primary);
+  color: #ffffff;
+  box-shadow: var(--shadow-blue);
+}
+
+/* 레드 강조 버튼 */
+.accent-btn {
+  background-color: #f6465d;
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(246, 70, 93, 0.2);
+}
+
+/* 세컨더리 다크 버튼 */
+.secondary-btn {
+  background-color: #2b3139;
+  color: var(--text-dim);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+
+/* ========================================
+    입력창 & 인터랙션
+   ======================================== */
+
+input,
+select {
+  transition:
+    border-color 0.2s,
+    background-color 0.2s;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--color-primary) !important;
   background-color: #1e222d;
 }
 
-/* 리셋 버튼 호버 효과 */
-.reset-btn:hover {
-  background-color: #363c4e !important;
-  color: #fff !important;
-  border-color: #5d6673 !important;
+/* ========================================
+    애니메이션 & 특수 효과
+   ======================================== */
+
+/* 로딩 스피너 */
+.loading-spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(41, 98, 255, 0.1);
+  border-radius: 50%;
+  border-top-color: var(--color-primary);
+  animation: spin 0.8s linear infinite;
 }
 
-/* 포지션 종료 버튼 호버 */
-.close-btn:hover {
-  background-color: #f6465d !important;
-  border-color: #f6465d !important;
-  color: #fff !important;
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 라이브 펄스 효과 */
+.live-pulse {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+}
+
+/* 랭킹 행 호버 효과 */
+.ranking-row:hover {
+  background-color: rgba(41, 98, 255, 0.06) !important;
 }
