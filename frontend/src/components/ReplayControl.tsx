@@ -11,7 +11,7 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
   timeframe,
 }) => {
   const [logs, setLogs] = useState<string[]>([]);
-  const [days, setDays] = useState<number>(30);
+  const [days, setDays] = useState<number>(365); // [수정] 기본값을 365로 변경
   const [isSimulating, setIsSimulating] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -20,6 +20,8 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
 
   // 1. 실시간 로그 수신을 위한 웹소켓 연결
   useEffect(() => {
+    let reconnectTimeout: number;
+
     const connectSocket = () => {
       const url = analysisApi.getLogSocketUrl();
       const ws = new WebSocket(url);
@@ -29,14 +31,18 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
       };
 
       ws.onmessage = (event) => {
-        // 백엔드에서 보낸 텍스트 로그를 리스트에 추가
-        setLogs((prev) => [...prev, event.data].slice(-100)); // 최신 100개 유지
+        setLogs((prev) => [...prev, event.data].slice(-100));
       };
 
       ws.onclose = () => {
         console.log("⚪ 로그 소켓 연결 종료 (재연결 시도 중...)");
-        // 연결이 끊기면 3초 후 재연결 시도
-        setTimeout(connectSocket, 3000);
+        // 컴포넌트가 언마운트되지 않았다면 3초 후 재연결
+        reconnectTimeout = window.setTimeout(connectSocket, 3000);
+      };
+
+      ws.onerror = (err) => {
+        console.error("🔴 로그 소켓 에러:", err);
+        ws.close();
       };
 
       socketRef.current = ws;
@@ -45,17 +51,19 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
     connectSocket();
 
     return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
       socketRef.current?.close();
     };
   }, []);
 
-  // 2. 새 로그가 추가될 때마다 최하단으로 자동 스크롤
+  // 2. 새 로그 추가 시 자동 스크롤
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  // 3. 전체 시뮬레이션 실행 (Optimizer 호출)
-  const handleStartSimulation = async () => {
+  // 3. 전체 시뮬레이션 실행 (e.preventDefault 추가)
+  const handleStartSimulation = async (e: React.MouseEvent) => {
+    e.preventDefault(); // [추가] 브라우저 새로고침/이벤트 전파 방지
     if (isSimulating) return;
 
     setIsSimulating(true);
@@ -70,12 +78,13 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
     }
   };
 
-  // 4. 과거 데이터 동기화 (Days 기반 저장)
-  const handleSyncHistorical = async () => {
+  // 4. 과거 데이터 동기화 (e.preventDefault 추가)
+  const handleSyncHistorical = async (e: React.MouseEvent) => {
+    e.preventDefault(); // [추가]
     if (isSyncing) return;
 
     setIsSyncing(true);
-    setLogs((prev) => [...prev, `${symbol} ${days}일치 데이터 수집 시작...`]);
+    setLogs((prev) => [...prev, ` ${symbol} ${days}일치 데이터 수집 시작...`]);
 
     try {
       await analysisApi.syncHistoricalData(symbol, timeframe, days);
@@ -86,11 +95,13 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
     }
   };
 
-  const clearLogs = () => setLogs([]);
+  const clearLogs = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setLogs([]);
+  };
 
   return (
     <div style={containerStyle}>
-      {/* 상단 컨트롤바 */}
       <div style={controlBarStyle}>
         <div style={inputGroupStyle}>
           <span style={labelStyle}>과거 데이터 (일):</span>
@@ -101,6 +112,7 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
             style={inputStyle}
           />
           <button
+            type="button" // [명시]
             onClick={handleSyncHistorical}
             disabled={isSyncing}
             style={isSyncing ? disabledBtnStyle : syncBtnStyle}
@@ -111,19 +123,19 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
 
         <div style={{ display: "flex", gap: "10px" }}>
           <button
+            type="button" // [명시]
             onClick={handleStartSimulation}
             disabled={isSimulating}
             style={isSimulating ? disabledBtnStyle : runBtnStyle}
           >
             {isSimulating ? "계산 중..." : "전체 시뮬레이션 실행"}
           </button>
-          <button onClick={clearLogs} style={clearBtnStyle}>
+          <button type="button" onClick={clearLogs} style={clearBtnStyle}>
             로그 지우기
           </button>
         </div>
       </div>
 
-      {/* 실시간 로그 터미널 */}
       <div style={terminalStyle}>
         <div style={terminalHeaderStyle}>
           <span>Real-time Strategy Optimizer Logs</span>
@@ -149,7 +161,7 @@ export const ReplayControl: React.FC<ReplayControlProps> = ({
   );
 };
 
-// --- [ 스타일 정의 ] ---
+// --- 스타일 정의는 기존과 동일하게 유지 ---
 const containerStyle: React.CSSProperties = {
   padding: "20px 24px",
   backgroundColor: "#131722",
@@ -198,6 +210,7 @@ const getLogItemStyle = (log: string): React.CSSProperties => {
   if (log.includes("STOP_LOSS")) color = "#ef5350";
   if (log.includes("불타기")) color = "#ffa726";
   if (log.includes("[INFO]")) color = "#2962FF";
+  if (log.includes("[진행도]")) color = "#ffa726"; // 진행도 로그 색상 추가
   return { color, marginBottom: "4px" };
 };
 

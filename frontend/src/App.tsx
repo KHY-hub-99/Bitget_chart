@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
 import { fetchChartData, subscribeChartData } from "./api";
 import TradingChart from "./TradingChart";
 
@@ -8,13 +8,26 @@ import { PositionBoard } from "./components/PositionBoard";
 import { useSimulation } from "./hooks/useSimulation";
 import { Toast } from "./components/Toast";
 
-// 🌟 [추가/수정] 신규 컴포넌트 임포트
+// 신규 컴포넌트 임포트
 import { ReplayControl } from "./components/ReplayControl";
-import SimulationResultsPage from "./components/SimulationResultsPage"; // 경로 확인 필요
+import SimulationResultsPage from "./components/SimulationResultsPage";
+
+// [최적화] 리렌더링 방지를 위한 메모이제이션
+const MemoizedTradingChart = memo(TradingChart);
+const MemoizedResultsPage = memo(SimulationResultsPage);
+const MemoizedReplayControl = memo(ReplayControl);
 
 function App() {
-  // 뷰 모드 관리 ('chart' | 'results')
-  const [view, setView] = useState<"chart" | "results">("chart");
+  // [수정] 뷰 모드 관리: LocalStorage를 사용하여 새로고침 시에도 마지막 탭 유지
+  const [view, setView] = useState<"chart" | "results">(() => {
+    return (
+      (localStorage.getItem("activeTab") as "chart" | "results") || "chart"
+    );
+  });
+
+  useEffect(() => {
+    localStorage.setItem("activeTab", view);
+  }, [view]);
 
   const [chartData, setChartData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +49,7 @@ function App() {
 
   const [symbol, setSymbol] = useState<string>("BTCUSDT");
   const [timeframe, setTimeframe] = useState<string>("15m");
-  const [days, setDays] = useState<number>(30);
+  const [days, setDays] = useState<number>(365); // [수정] 기본 데이터 범위를 365일로 변경
 
   const [inputSymbol, setInputSymbol] = useState<string>("BTCUSDT");
   const [inputTimeframe, setInputTimeframe] = useState<string>("15m");
@@ -136,7 +149,7 @@ function App() {
       })
       .catch((err) => {
         if (!isActive) return;
-        setError("데이터 로드 실패.");
+        setError("데이터 로드 실패");
         setIsLoading(false);
       });
 
@@ -155,7 +168,7 @@ function App() {
     try {
       await changePositionMode(mode);
     } catch (err: any) {
-      const msg = err.response?.data?.detail || "모드 변경에 실패했습니다.";
+      const msg = err.response?.data?.detail || "모드 변경 실패";
       showToast(msg, "error");
     }
   };
@@ -243,6 +256,7 @@ function App() {
                   value={inputTimeframe}
                   onChange={(e) => setInputTimeframe(e.target.value)}
                 >
+                  {/* [수정] 지정된 타임프레임 옵션만 노출 */}
                   <option value="15m">15m</option>
                   <option value="1h">1h</option>
                   <option value="4h">4h</option>
@@ -288,7 +302,7 @@ function App() {
                     className="chart-section"
                     style={{ flex: 2, minHeight: "450px" }}
                   >
-                    <TradingChart
+                    <MemoizedTradingChart
                       key={`${symbol}-${timeframe}`}
                       data={chartData}
                       settings={visibleLayers}
@@ -339,10 +353,10 @@ function App() {
             }}
           >
             {/* 상단: 시뮬레이션 로그 및 데이터 관리 */}
-            <ReplayControl symbol={symbol} timeframe={timeframe} />
+            <MemoizedReplayControl symbol={symbol} timeframe={timeframe} />
 
             {/* 하단: DB에 저장된 시뮬레이션 결과 랭킹 테이블 */}
-            <SimulationResultsPage />
+            <MemoizedResultsPage />
           </div>
         )}
       </main>
@@ -351,7 +365,6 @@ function App() {
 }
 
 // --- [ 스타일 설정 ] ---
-
 const navBtnStyle: React.CSSProperties = {
   backgroundColor: "transparent",
   color: "#848e9c",
