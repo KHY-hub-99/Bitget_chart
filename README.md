@@ -173,6 +173,51 @@ Bitget_chart/
   - ⏭️ Next Candle (수동으로 1캔들씩 넘기며 매매 복기)
 - **동기화:** 프론트엔드에서 재생 버튼을 누르면 백엔드의 Time Index가 전진하며 새로운 캔들과 갱신된 PNL 데이터를 WebSocket 또는 Polling으로 전달.
 
+#### 시뮬레이션 저장 값
+
+##### 1. 전략 최적화 최종 통계 테이블 (`strategy_optimization`)
+
+전체 기간 동안 특정 파라미터(경우의 수)로 돌렸을 때의 최종 성적표를 저장합니다.
+
+| Column Name     | Data Type | Description              | Example             |
+| :-------------- | :-------- | :----------------------- | :------------------ |
+| `id`            | INTEGER   | 기본 키 (Auto Increment) | 1                   |
+| `position_mode` | TEXT      | 포지션 모드              | 'HEDGE' / 'ONE_WAY' |
+| `leverage`      | INTEGER   | 사용된 레버리지          | 10, 20, 50          |
+| `tp_ratio`      | REAL      | 익절 비율                | 0.03 (3%)           |
+| `sl_ratio`      | REAL      | 손절 비율                | 0.015 (1.5%)        |
+| `total_trades`  | INTEGER   | 총 매매 횟수             | 150                 |
+| `win_rate`      | REAL      | 승률 (%)                 | 55.4                |
+| `net_profit`    | REAL      | 최종 순수익 (USDT)       | 2450.50             |
+| `max_drawdown`  | REAL      | 최대 낙폭 (MDD, %)       | -15.2               |
+| `tested_at`     | TIMESTAMP | 테스트 실행 시간         | 2023-10-25 14:30:00 |
+
+##### 2. 인공지능 학습용 상세 데이터셋 (`ml_trading_dataset`)
+
+매매 신호가 발생한 매 순간(Tick)의 시장 원본 데이터와 해당 매매의 최종 결과를 기록합니다.
+
+| Column Name        | Data Type | Feature Type | Description                                               |
+| :----------------- | :-------- | :----------- | :-------------------------------------------------------- |
+| `id`               | INTEGER   | Meta         | 기본 키 (Auto Increment)                                  |
+| `signal_time`      | TIMESTAMP | Meta         | 진입 시간                                                 |
+| `signal_type`      | TEXT      | Feature (X)  | 발생한 신호 타입 ('MASTER_LONG', 'TOP_DIAMOND' 등)        |
+| `entry_open`       | REAL      | Feature (X)  | 진입 캔들 시가 (Open)                                     |
+| `entry_high`       | REAL      | Feature (X)  | 진입 캔들 고가 (High)                                     |
+| `entry_low`        | REAL      | Feature (X)  | 진입 캔들 저가 (Low)                                      |
+| `entry_close`      | REAL      | Feature (X)  | 진입 캔들 종가 (Close)                                    |
+| `entry_volume`     | REAL      | Feature (X)  | 진입 캔들 거래량 (Volume)                                 |
+| `entry_rsi`        | REAL      | Feature (X)  | 진입 시점 RSI 값                                          |
+| `entry_macd`       | REAL      | Feature (X)  | 진입 시점 MACD 값                                         |
+| `entry_mfi`        | REAL      | Feature (X)  | 진입 시점 MFI 값                                          |
+| `bb_width`         | REAL      | Feature (X)  | 볼린저 밴드 폭 (변동성 파악용)                            |
+| `position_mode`    | TEXT      | Setting      | 시뮬레이션에 적용한 모드                                  |
+| `leverage`         | INTEGER   | Setting      | 시뮬레이션에 적용한 레버리지                              |
+| `tp_ratio`         | REAL      | Setting      | 시뮬레이션 익절 세팅값                                    |
+| `sl_ratio`         | REAL      | Setting      | 시뮬레이션 손절 세팅값                                    |
+| `result_status`    | TEXT      | Label (y)    | 최종 매매 결과 ('TAKE_PROFIT', 'STOP_LOSS', 'LIQUIDATED') |
+| `realized_pnl`     | REAL      | Label (y)    | 최종 실현 수익 (USDT)                                     |
+| `duration_candles` | INTEGER   | Label (y)    | 진입부터 종료까지 걸린 캔들 수                            |
+
 ### 🤖 Step 5: Master 전략(Indicator) 시그널 연동 및 자동화
 
 기존의 `pandas-ta` 기반 지표들과 시뮬레이터를 연결하여 반자동/자동 매매 환경을 구성합니다.
