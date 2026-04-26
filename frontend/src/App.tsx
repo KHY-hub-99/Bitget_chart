@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react"; // 🌟 useRef 추가
 import { fetchChartData, subscribeChartData } from "./api";
 import TradingChart from "./TradingChart";
 
@@ -13,7 +13,6 @@ function App() {
   const [isLive, setIsLive] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // 현재 시장가(Current Price) 상태
   const [currentPrice, setCurrentPrice] = useState<number>(0);
 
   const [symbol, setSymbol] = useState<string>("BTCUSDT");
@@ -23,9 +22,24 @@ function App() {
   const [inputSymbol, setInputSymbol] = useState<string>("BTCUSDT");
   const [inputTimeframe, setInputTimeframe] = useState<string>("15m");
 
-  // 🌟 [핵심] 시뮬레이션 상태 통합 관리
-  // 여기서 한 번 선언한 sim 객체를 아래에서 자식들에게 Props로 내려줍니다.
-  const sim = useSimulation(symbol);
+  // 🌟 구조 분해 할당으로 변수들을 가져옵니다.
+  const {
+    status,
+    loading,
+    placeMarketOrder,
+    closeMarketPosition,
+    checkTick,
+    resetSimulation,
+    changePositionMode,
+    currentPosition,
+  } = useSimulation(symbol);
+
+  // 🌟 [무한 새로고켓 해결 핵심]
+  // 최신 checkTick 함수를 담아둘 Ref입니다. 웹소켓 재연결 없이 최신 함수만 갈아끼웁니다.
+  const checkTickRef = useRef(checkTick);
+  useEffect(() => {
+    checkTickRef.current = checkTick;
+  }, [checkTick]);
 
   const [visibleLayers, setVisibleLayers] = useState({
     kijun: true,
@@ -59,21 +73,22 @@ function App() {
           if (!isActive) return;
           setIsLive(true);
 
-          // 1️⃣ [사이드 이펙트 처리] 웹소켓 데이터가 도착하자마자 가격부터 추출합니다.
           if (newData.candles && newData.candles.length > 0) {
             const lastCandle = newData.candles[newData.candles.length - 1];
             const lastPrice = lastCandle.close;
 
-            // 🌟 setState 밖에서 실행해야 정상적으로 상태가 전파됩니다.
             setCurrentPrice(lastPrice);
-            sim.checkTick(lastPrice); // 백엔드에 틱을 쏘고, 지갑 상태(Mark Price)를 갱신함
+
+            // 🌟 [수정] sim.checkTick 대신 Ref를 통해 최신 함수 호출
+            // 이렇게 하면 useEffect가 재실행(웹소켓 재연결)되지 않습니다.
+            if (checkTickRef.current) {
+              checkTickRef.current(lastPrice);
+            }
           }
 
-          // 2️⃣ [차트 데이터 업데이트] 이후에 차트의 캔들과 지표를 병합합니다.
           setChartData((prev: any) => {
             if (!newData || !newData.candles || newData.candles.length === 0)
               return prev;
-
             if (!prev || prev.symbol !== symbol) return { ...newData, symbol };
 
             const mergeByTime = (prevArr: any[], nextArr: any[]) => {
@@ -84,7 +99,6 @@ function App() {
             };
 
             const mergedCandles = mergeByTime(prev.candles, newData.candles);
-
             const mergedIndicators = { ...prev.indicators };
             if (newData.indicators) {
               Object.keys(newData.indicators).forEach((key) => {
@@ -94,13 +108,10 @@ function App() {
                 );
               });
             }
-
             const mergedMarkers = mergeByTime(
               prev.markers || [],
               newData.markers || [],
             );
-
-            // ❌ 여기서 setCurrentPrice나 sim.checkTick을 지웠습니다!
 
             return {
               ...prev,
@@ -121,31 +132,19 @@ function App() {
       isActive = false;
       if (ws) ws.close();
     };
-  }, [symbol, timeframe, days]); // days도 의존성에 추가하는 것이 안전합니다.
+    // 🌟 [중요] 의존성 배열에서 checkTick을 제거하여 무한 새로고침 방지
+  }, [symbol, timeframe, days]);
 
   const handleApplySettings = () => {
     setSymbol(inputSymbol);
     setTimeframe(inputTimeframe);
   };
 
-  const currentPosition = sim.currentPosition;
-
   return (
-    <div
-      className="app-container"
-      style={{
-        width: "100vw",
-        height: "100vh",
-        backgroundColor: "#0b0e14",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-      }}
-    >
-      {/* --- 헤더 & 툴바 (기존 유지) --- */}
+    <div className="app-container" style={appContainerStyle}>
       <header style={headerStyle}>
         <h1 style={logoStyle}>
-          Crypto Master <span style={{ color: "#2962FF" }}>Dashboard</span>
+          Crypto Trading <span style={{ color: "#2962FF" }}>Master</span>
         </h1>
         <div
           style={{
@@ -198,7 +197,6 @@ function App() {
         </button>
       </div>
 
-      {/* --- 레이어 토글 --- */}
       <div style={layerToggleStyle}>
         {Object.entries(visibleLayers).map(([key, isVisible]) => (
           <label key={key} style={checkboxLabelStyle}>
@@ -212,16 +210,7 @@ function App() {
         ))}
       </div>
 
-      {/* --- 🌟 메인 레이아웃 (데이터 바인딩 수정됨) --- */}
-      <main
-        className="app-main"
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
+      <main className="app-main" style={mainStyle}>
         {error ? (
           <div style={centerMsgStyle}>
             <h3 style={{ color: "#ef5350" }}>{error}</h3>
@@ -243,35 +232,29 @@ function App() {
               />
             </div>
 
-            <div
-              className="bottom-section"
-              style={{
-                flex: 1,
-                display: "flex",
-                borderTop: "1px solid #2a2e39",
-                minHeight: "250px",
-              }}
-            >
+            <div className="bottom-section" style={bottomSectionStyle}>
               <div
                 className="position-section"
                 style={{ flex: 1.5, borderRight: "1px solid #2a2e39" }}
               >
                 <PositionBoard
                   currentPrice={currentPrice}
-                  activeSymbol={symbol} // 이 줄을 반드시 추가해야 합니다.
-                  status={sim.status}
-                  closeMarketPosition={sim.closeMarketPosition}
+                  activeSymbol={symbol}
+                  status={status}
+                  closeMarketPosition={closeMarketPosition}
                 />
               </div>
+
               <div className="order-section" style={{ flex: 1 }}>
-                {/* 🆕 주문 패널에 모든 기능과 리셋 함수 연결 */}
                 <OrderPanel
                   currentPrice={currentPrice}
-                  placeMarketOrder={sim.placeMarketOrder}
-                  resetSimulation={sim.resetSimulation}
-                  loading={sim.loading}
-                  currentPosition={sim.currentPosition}
-                  availableBalance={sim.status?.available_balance ?? 0}
+                  placeMarketOrder={placeMarketOrder}
+                  resetSimulation={resetSimulation}
+                  changePositionMode={changePositionMode}
+                  positionMode={status?.position_mode ?? "ONE_WAY"}
+                  loading={loading}
+                  currentPosition={currentPosition}
+                  availableBalance={status?.available_balance ?? 0}
                 />
               </div>
             </div>
@@ -283,6 +266,26 @@ function App() {
 }
 
 // --- 스타일 객체 (가독성을 위해 하단 배치) ---
+const appContainerStyle: React.CSSProperties = {
+  width: "100vw",
+  height: "100vh",
+  backgroundColor: "#0b0e14",
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+};
+const mainStyle: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+};
+const bottomSectionStyle: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  borderTop: "1px solid #2a2e39",
+  minHeight: "250px",
+};
 const headerStyle: React.CSSProperties = {
   height: "60px",
   padding: "0 24px",

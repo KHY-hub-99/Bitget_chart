@@ -27,14 +27,12 @@ export const subscribeChartData = (
   timeframe: string,
   onMessage: (data: any) => void,
 ) => {
-  // 쿼리 스트링(?) 방식에서 경로(/) 방식으로 수정
   const ws = new WebSocket(`${WS_BASE}/ws/chart/${symbol}/${timeframe}`);
 
   ws.onopen = () => console.log(`🟢 웹소켓 연결 성공: ${symbol}-${timeframe}`);
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
-      console.log("[실시간 웹소켓 수신]:", data);
       onMessage(data);
     } catch (error) {
       console.error("웹소켓 파싱 에러:", error);
@@ -64,7 +62,8 @@ export interface SimulationStatus {
   total_balance: number;
   available_balance: number;
   frozen_margin: number;
-  positions: { [symbol: string]: Position };
+  position_mode: "ONE_WAY" | "HEDGE"; // 모드 상태 추가
+  positions: { [key: string]: Position };
 }
 
 export const simulationApi = {
@@ -91,13 +90,14 @@ export const simulationApi = {
     return response.data;
   },
 
-  // 3. 🆕 포지션 시장가 종료 (추가됨 - 버튼 작동 핵심)
-  closePosition: async (symbol: string) => {
+  // 3. 포지션 시장가 종료
+  closePosition: async (targetKey: string) => {
+    // 💡 심볼이 아닌 '포지션 키'를 보내도록 이름 변경 (Hedge 대응)
     const response = await axios.post(
       `${API_BASE}/api/simulation/close`,
       null,
       {
-        params: { symbol }, // Query Parameter로 전달
+        params: { symbol: targetKey },
       },
     );
     return response.data;
@@ -115,6 +115,14 @@ export const simulationApi = {
   // 5. 초기화
   reset: async () => {
     const response = await axios.post(`${API_BASE}/api/simulation/reset`);
+    return response.data;
+  },
+
+  // 6. 포지션 모드 변경 API 추가 (이게 빠져있어서 에러가 났던 것입니다!)
+  setMode: async (mode: "ONE_WAY" | "HEDGE") => {
+    const response = await axios.post(`${API_BASE}/api/simulation/mode`, {
+      mode: mode,
+    });
     return response.data;
   },
 };

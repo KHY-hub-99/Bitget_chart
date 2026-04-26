@@ -18,7 +18,7 @@ from data_process.load_data import CryptoDataFeed
 from services.chat_services import convert_df_to_chart_data
 
 # [시뮬레이션 핵심 로직 임포트]
-from simulation.models import Wallet, PositionSide
+from simulation.models import Wallet, PositionSide, PositionMode
 from simulation.engine import SimulationEngine
 
 # --- [1. 경로 및 초기 설정] ---
@@ -43,6 +43,9 @@ class OrderRequest(BaseModel):
 class TickRequest(BaseModel):
     symbol: str = "BTC/USDT"
     current_price: Decimal
+    
+class ModeRequest(BaseModel):
+    mode: PositionMode
 
 # --- [2. 백그라운드 데이터 작업 로직 (기존 동일)] ---
 def preload_initial_market_data():
@@ -225,6 +228,15 @@ async def process_price_tick(req: TickRequest):
         "tick_result": result,
         "wallet": serialize_wallet(sim_wallet)
     }
+    
+@app.post("/api/simulation/mode")
+async def set_position_mode(req: ModeRequest):
+    # 포지션이 있을 때 모드를 바꾸면 계산이 꼬이므로 체크 (실제 거래소와 동일 로직)
+    if sim_wallet.positions:
+        raise HTTPException(status_code=400, detail="활성화된 포지션이 있을 때는 모드를 변경할 수 없습니다.")
+    
+    sim_wallet.position_mode = req.mode
+    return {"message": f"모드가 {req.mode}로 변경되었습니다.", "mode": req.mode}
 
 @app.post("/api/simulation/reset")
 async def reset_simulation():

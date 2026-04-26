@@ -35,7 +35,7 @@ export const useSimulation = (symbol: string) => {
         take_profit: tp,
         stop_loss: sl,
       });
-      await refreshStatus(); // 주문 성공 후 즉시 상태 동기화
+      await refreshStatus();
     } catch (error: any) {
       alert(error.response?.data?.detail || "주문 실패");
     } finally {
@@ -44,7 +44,9 @@ export const useSimulation = (symbol: string) => {
   };
 
   // 3. 포지션 시장가 종료 (Market Close)
-  const closeMarketPosition = async (targetKey: string = symbol) => {
+  // targetKey가 없으면 현재 심볼의 모든 포지션을 닫는 대신, 명확한 키를 받도록 권장합니다.
+  const closeMarketPosition = async (targetKey: string) => {
+    if (!targetKey) return;
     setLoading(true);
     try {
       await simulationApi.closePosition(targetKey);
@@ -57,20 +59,15 @@ export const useSimulation = (symbol: string) => {
   };
 
   // 4. 실시간 가격 변동 체크 (청산/익절/손절 감시)
-  // 차트에서 새로운 가격이 들어올 때마다 App.tsx에서 이 함수를 호출해줘야 합니다.
   const checkTick = useCallback(
     async (price: number) => {
       try {
         const result = await simulationApi.processTick(symbol, price);
 
-        // 백엔드에서 전달받은 최신 지갑(wallet) 정보를 상태에 반영
-        // 이 순간 PositionBoard의 Mark Price와 PNL이 즉시 바뀝니다.
         if (result.wallet) {
           setStatus(result.wallet);
         }
 
-        // 만약 청산이나 TP/SL로 포지션이 닫혔다면(RUNNING이 아니라면)
-        // 전체 상태를 다시 한번 정밀하게 새로고침
         if (result.tick_result && result.tick_result.status !== "RUNNING") {
           await refreshStatus();
         }
@@ -95,31 +92,55 @@ export const useSimulation = (symbol: string) => {
     }
   };
 
-  // 초기 로드 시 한 번 실행
+  // 6. 포지션 모드 변경
+  const changePositionMode = async (mode: "ONE_WAY" | "HEDGE") => {
+    try {
+      // 포지션이 있으면 백엔드에서 에러를 뱉으므로 프론트에서 먼저 체크하면 좋습니다.
+      if (status && Object.keys(status.positions).length > 0) {
+        alert("활성화된 포지션이 있을 때는 모드를 변경할 수 없습니다.");
+        return;
+      }
+      await simulationApi.setMode(mode);
+      await refreshStatus();
+      alert(
+        `포지션 모드가 ${mode === "ONE_WAY" ? "단방향" : "양방향"}으로 변경되었습니다.`,
+      );
+    } catch (error: any) {
+      alert(error.response?.data?.detail || "모드 변경 실패");
+    }
+  };
+
+  // 초기 로드 시 실행
   useEffect(() => {
     refreshStatus();
   }, [refreshStatus]);
 
-  // 양방향 모드일 경우 키가 달라질 수 있으므로, 값(Object.values)을 뒤져서 심볼이 같은 포지션을 찾습니다.
-  const currentPosition = useMemo(() => {
-    if (!status) return null;
-    const posKey = Object.keys(status.positions).find((key) =>
-      key.startsWith(symbol),
-    );
-    if (posKey) {
-      return { ...status.positions[posKey], symbol };
-    }
-    return null;
+  // [수정 핵심] Hedge Mode 대응: 현재 심볼에 해당하는 모든 포지션 찾기
+  // 차트에는 여러 선이 그어질 수 있도록 배열을 반환하는 activePositions를 추가합니다.
+  const activePositions = useMemo(() => {
+    if (!status || !status.positions) return [];
+
+    // 정확한 매칭: 'BTCUSDT' 혹은 'BTCUSDT_LONG', 'BTCUSDT_SHORT'만 필터링
+    return Object.entries(status.positions)
+      .filter(([key]) => key === symbol || key.startsWith(`${symbol}_`))
+      .map(([key, pos]) => ({ ...pos, positionKey: key }));
   }, [status, symbol]);
 
+  // 기존 TradingChart와의 호환성을 위해 "가장 먼저 찾은 포지션" 하나도 유지
+  const currentPosition = useMemo(() => {
+    return activePositions.length > 0 ? activePositions[0] : null;
+  }, [activePositions]);
+
   return {
-    status, // 전체 지갑 상태 (잔고 등)
-    loading, // 주문/종료 처리 중 로딩
-    placeMarketOrder, // 주문 함수
-    closeMarketPosition, // 종료 함수
-    checkTick, // 가격 변동 체크 함수
-    resetSimulation, // 리셋 함수
-    currentPosition, // 현재 활성화된 포지션 정보
-    refreshStatus, // 수동 새로고침
+    status,
+    loading,
+    placeMarketOrder,
+    closeMarketPosition,
+    checkTick,
+    resetSimulation,
+    changePositionMode,
+    currentPosition, // 기존 호환용 (단수)
+    activePositions, // Hedge 모드 대응용 (복수)
+    refreshStatus,
   };
 };

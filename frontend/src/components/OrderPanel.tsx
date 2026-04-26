@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 
-// Props 인터페이스 정의 (App.tsx에서 넘겨줄 데이터들)
+// Props 인터페이스 정의 (새로운 필드 추가)
 interface OrderPanelProps {
   currentPrice: number;
   placeMarketOrder: (
@@ -11,19 +11,23 @@ interface OrderPanelProps {
     tp?: number,
     sl?: number,
   ) => Promise<void>;
-  resetSimulation: () => Promise<void>; // 🆕 리셋 함수 추가
+  resetSimulation: () => Promise<void>;
   loading: boolean;
   currentPosition: any;
   availableBalance: number;
+  changePositionMode: (mode: "ONE_WAY" | "HEDGE") => Promise<void>;
+  positionMode: "ONE_WAY" | "HEDGE";
 }
 
 export const OrderPanel: React.FC<OrderPanelProps> = ({
   currentPrice,
   placeMarketOrder,
-  resetSimulation, // 🆕 props에서 가져옴
+  resetSimulation,
   loading,
   currentPosition,
   availableBalance = 0,
+  changePositionMode,
+  positionMode,
 }) => {
   // --- [로컬 상태 관리] ---
   const [leverage, setLeverage] = useState<number>(10);
@@ -67,11 +71,36 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
 
   return (
     <div style={styles.container}>
+      {/* 🆕 0. 포지션 모드 선택 탭 (Hedge / One-Way) */}
+      <div style={styles.modeTabContainer}>
+        <button
+          onClick={() => changePositionMode("ONE_WAY")}
+          style={{
+            ...styles.modeBtn,
+            color: positionMode === "ONE_WAY" ? "#fcd535" : "#848e9c",
+            borderBottom:
+              positionMode === "ONE_WAY" ? "2px solid #fcd535" : "none",
+          }}
+        >
+          One-Way
+        </button>
+        <button
+          onClick={() => changePositionMode("HEDGE")}
+          style={{
+            ...styles.modeBtn,
+            color: positionMode === "HEDGE" ? "#fcd535" : "#848e9c",
+            borderBottom:
+              positionMode === "HEDGE" ? "2px solid #fcd535" : "none",
+          }}
+        >
+          Hedge (양방향)
+        </button>
+      </div>
+
       {/* 1. 지갑 정보 및 리셋 버튼 */}
       <div style={styles.walletInfo}>
         <div style={styles.flexBetween}>
           <span style={styles.label}>Available Balance</span>
-          {/* 🆕 리셋 버튼 추가 */}
           <button
             onClick={resetSimulation}
             style={styles.resetBtn}
@@ -153,31 +182,39 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
       <div style={styles.btnRow}>
         <button
           onClick={() => openConfirmModal("LONG")}
-          disabled={loading} // [수정] || !!currentPosition 삭제
+          disabled={loading}
           style={{
             ...styles.actionBtn,
             backgroundColor: "#00b561",
-            opacity: loading ? 0.5 : 1, // [수정] || !!currentPosition 조건 삭제
+            opacity: loading ? 0.5 : 1,
             cursor: loading ? "not-allowed" : "pointer",
           }}
         >
-          {loading ? "..." : "Buy / Long"}
+          {loading
+            ? "..."
+            : positionMode === "HEDGE"
+              ? "Open Long"
+              : "Buy / Long"}
         </button>
         <button
           onClick={() => openConfirmModal("SHORT")}
-          disabled={loading} // [수정] || !!currentPosition 삭제
+          disabled={loading}
           style={{
             ...styles.actionBtn,
             backgroundColor: "#eb4d4b",
-            opacity: loading ? 0.5 : 1, // [수정] || !!currentPosition 조건 삭제
+            opacity: loading ? 0.5 : 1,
             cursor: loading ? "not-allowed" : "pointer",
           }}
         >
-          {loading ? "..." : "Sell / Short"}
+          {loading
+            ? "..."
+            : positionMode === "HEDGE"
+              ? "Open Short"
+              : "Sell / Short"}
         </button>
       </div>
 
-      {/* 6. 최종 확인 모달 (기존과 동일) */}
+      {/* 6. 최종 확인 모달 (기존 유지) */}
       {showModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
@@ -187,7 +224,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({
                 marginBottom: "15px",
               }}
             >
-              Confirm {side} Order
+              Confirm {side} Order ({positionMode})
             </h3>
             <div style={styles.confirmRow}>
               <span>Symbol:</span> <strong>BTCUSDT</strong>
@@ -247,6 +284,22 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: "#131722",
     boxSizing: "border-box",
   },
+  // 🆕 모드 탭 스타일
+  modeTabContainer: {
+    display: "flex",
+    gap: "15px",
+    borderBottom: "1px solid #2a2e39",
+    marginBottom: "4px",
+  },
+  modeBtn: {
+    padding: "8px 0",
+    background: "none",
+    border: "none",
+    fontSize: "12px",
+    fontWeight: "bold",
+    cursor: "pointer",
+    transition: "all 0.2s",
+  },
   walletInfo: {
     padding: "10px",
     backgroundColor: "#1e222d",
@@ -256,8 +309,6 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   label: { fontSize: "12px", color: "#848e9c", marginBottom: "4px" },
   balanceText: { fontSize: "14px", fontWeight: "bold", color: "#d1d4dc" },
-
-  // 🆕 리셋 버튼 스타일
   resetBtn: {
     padding: "2px 8px",
     backgroundColor: "#2b3139",
@@ -268,7 +319,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: "pointer",
     transition: "all 0.2s",
   },
-
   section: { display: "flex", flexDirection: "column", gap: "8px" },
   flexBetween: {
     display: "flex",
