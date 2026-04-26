@@ -84,16 +84,19 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
               // 2. 만약 현재 차트 심볼과 포지션 심볼이 같다면 실시간 currentPrice 사용
               // 3. 둘 다 아니면 진입가 유지 (가격 꼬임 방지)
               const markPrice =
-                pos.mark_price && pos.mark_price !== 0
-                  ? pos.mark_price
-                  : symbol === activeSymbol
-                    ? currentPrice
+                symbol === activeSymbol && currentPrice > 0
+                  ? currentPrice
+                  : pos.mark_price && pos.mark_price !== 0
+                    ? pos.mark_price
                     : pos.entry_price;
 
+              const unrealizedPnl = isLong
+                ? (markPrice - pos.entry_price) * pos.size
+                : (pos.entry_price - markPrice) * pos.size;
+
               // ROE 및 PNL 계산
-              const roe =
-                (pos.unrealized_pnl / (pos.isolated_margin || 1)) * 100;
-              const pnlColor = pos.unrealized_pnl >= 0 ? "#00b561" : "#ff4c4c";
+              const roe = (unrealizedPnl / (pos.isolated_margin || 1)) * 100;
+              const pnlColor = unrealizedPnl >= 0 ? "#00b561" : "#ff4c4c";
 
               return (
                 <tr key={symbol} style={styles.tdRow}>
@@ -124,7 +127,7 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                     })}
                   </td>
 
-                  {/* 4. 시장 가격 (Mark) - 수정됨 */}
+                  {/* 4. 시장 가격 (Mark) */}
                   <td style={styles.td}>
                     <strong style={{ color: "#eaecef" }}>
                       {Number(markPrice).toLocaleString(undefined, {
@@ -169,8 +172,8 @@ export const PositionBoard: React.FC<PositionBoardProps> = ({
                     }}
                   >
                     <div className="tabular-nums">
-                      {pos.unrealized_pnl > 0 ? "+" : ""}
-                      {pos.unrealized_pnl.toFixed(2)} USDT
+                      {unrealizedPnl > 0 ? "+" : ""}
+                      {unrealizedPnl.toFixed(2)} USDT
                     </div>
                     <div style={{ fontSize: "11px", opacity: 0.8 }}>
                       ({roe > 0 ? "+" : ""}
