@@ -41,7 +41,8 @@ Bitget_chart/
 │   ├── simulation/                 # 가상 시뮬레이션 엔진 (격리 모드)
 │   │   ├── __init__.py
 │   │   ├── engine.py               # 주문 체결, 청산가 계산, 틱(Tick) 업데이트 로직
-│   │   └── models.py               # Wallet, Position 상태 데이터 모델 (Pydantic)
+│   │   ├── models.py               # Wallet, Position 상태 데이터 모델 (Pydantic)
+│   │   └── strategy_optimizer.py   # 시뮬레이션 계산용 스크립트
 │   ├── market_data/                # SQLite db 저장소
 │   │   └── crypto_dashboard.db
 │   ├── services/                   # 데이터 가공 및 비즈니스 로직
@@ -196,27 +197,28 @@ Bitget_chart/
 
 매매 신호가 발생한 매 순간(Tick)의 시장 원본 데이터와 해당 매매의 최종 결과를 기록합니다.
 
-| Column Name        | Data Type | Feature Type | Description                                               |
-| :----------------- | :-------- | :----------- | :-------------------------------------------------------- |
-| `id`               | INTEGER   | Meta         | 기본 키 (Auto Increment)                                  |
-| `signal_time`      | TIMESTAMP | Meta         | 진입 시간                                                 |
-| `signal_type`      | TEXT      | Feature (X)  | 발생한 신호 타입 ('MASTER_LONG', 'TOP_DIAMOND' 등)        |
-| `entry_open`       | REAL      | Feature (X)  | 진입 캔들 시가 (Open)                                     |
-| `entry_high`       | REAL      | Feature (X)  | 진입 캔들 고가 (High)                                     |
-| `entry_low`        | REAL      | Feature (X)  | 진입 캔들 저가 (Low)                                      |
-| `entry_close`      | REAL      | Feature (X)  | 진입 캔들 종가 (Close)                                    |
-| `entry_volume`     | REAL      | Feature (X)  | 진입 캔들 거래량 (Volume)                                 |
-| `entry_rsi`        | REAL      | Feature (X)  | 진입 시점 RSI 값                                          |
-| `entry_macd`       | REAL      | Feature (X)  | 진입 시점 MACD 값                                         |
-| `entry_mfi`        | REAL      | Feature (X)  | 진입 시점 MFI 값                                          |
-| `bb_width`         | REAL      | Feature (X)  | 볼린저 밴드 폭 (변동성 파악용)                            |
-| `position_mode`    | TEXT      | Setting      | 시뮬레이션에 적용한 모드                                  |
-| `leverage`         | INTEGER   | Setting      | 시뮬레이션에 적용한 레버리지                              |
-| `tp_ratio`         | REAL      | Setting      | 시뮬레이션 익절 세팅값                                    |
-| `sl_ratio`         | REAL      | Setting      | 시뮬레이션 손절 세팅값                                    |
-| `result_status`    | TEXT      | Label (y)    | 최종 매매 결과 ('TAKE_PROFIT', 'STOP_LOSS', 'LIQUIDATED') |
-| `realized_pnl`     | REAL      | Label (y)    | 최종 실현 수익 (USDT)                                     |
-| `duration_candles` | INTEGER   | Label (y)    | 진입부터 종료까지 걸린 캔들 수                            |
+| Column Name        | Data Type | Feature Type  | Description                                               |
+| :----------------- | :-------- | :------------ | :-------------------------------------------------------- |
+| `id`               | INTEGER   | Meta          | 기본 키 (Auto Increment)                                  |
+| `signal_time`      | TIMESTAMP | Meta          | 진입 시간                                                 |
+| `signal_type`      | TEXT      | Feature (X)   | 발생한 신호 타입 ('MASTER_LONG', 'TOP_DIAMOND' 등)        |
+| `entry_open`       | REAL      | Feature (X)   | 진입 캔들 시가 (Open)                                     |
+| `entry_high`       | REAL      | Feature (X)   | 진입 캔들 고가 (High)                                     |
+| `entry_low`        | REAL      | Feature (X)   | 진입 캔들 저가 (Low)                                      |
+| `entry_close`      | REAL      | Feature (X)   | 진입 캔들 종가 (Close)                                    |
+| `entry_volume`     | REAL      | Feature (X)   | 진입 캔들 거래량 (Volume)                                 |
+| `entry_rsi`        | REAL      | Feature (X)   | 진입 시점 RSI 값                                          |
+| `entry_macd`       | REAL      | Feature (X)   | 진입 시점 MACD 값                                         |
+| `entry_mfi`        | REAL      | Feature (X)   | 진입 시점 MFI 값                                          |
+| `bb_width`         | REAL      | Feature (X)   | 볼린저 밴드 폭 (변동성 파악용)                            |
+| `position_mode`    | TEXT      | Setting       | 시뮬레이션에 적용한 모드                                  |
+| `leverage`         | INTEGER   | Setting       | 시뮬레이션에 적용한 레버리지                              |
+| `tp_ratio`         | REAL      | Setting       | 시뮬레이션 익절 세팅값                                    |
+| `sl_ratio`         | REAL      | Setting       | 시뮬레이션 손절 세팅값                                    |
+| `result_status`    | TEXT      | Label (y)     | 최종 매매 결과 ('TAKE_PROFIT', 'STOP_LOSS', 'LIQUIDATED') |
+| `realized_pnl`     | REAL      | Label (y)     | 최종 실현 수익 (USDT)                                     |
+| `duration_candles` | INTEGER   | Label (y)     | 진입부터 종료까지 걸린 캔들 수                            |
+| `pyramid_count`    | INTEGER   | Label/Feature | 추세가 이어져 불타기(추가 진입)가 발생한 횟수             |
 
 ### 🤖 Step 5: Master 전략(Indicator) 시그널 연동 및 자동화
 

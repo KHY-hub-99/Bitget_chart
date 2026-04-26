@@ -20,6 +20,7 @@ from services.chat_services import convert_df_to_chart_data
 # [시뮬레이션 핵심 로직 임포트]
 from simulation.models import Wallet, PositionSide, PositionMode
 from simulation.engine import SimulationEngine
+from simulation.strategy_optimizer import StrategyOptimizer
 
 # --- [1. 경로 및 초기 설정] ---
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -29,6 +30,9 @@ db_path = os.path.join(db_folder, "crypto_dashboard.db")
 # [시뮬레이션 전용 전역 상태 관리]
 sim_wallet = Wallet(initial_balance=Decimal('10000.0'))
 sim_engine = SimulationEngine()
+
+# [로그 중계 시스템 전역 변수]
+simulation_log_queue = asyncio.Queue()
 
 # [시뮬레이션 요청 모델]
 class OrderRequest(BaseModel):
@@ -153,6 +157,42 @@ def serialize_wallet(wallet: Wallet):
             for sym, p in wallet.positions.items()
         }
     }
+    
+# --- [시뮬레이션 백그라운드 실행 함수] ---
+def run_full_optimization_task(symbol: str, timeframe: str, loop: asyncio.AbstractEventLoop):
+    """
+    DB에서 데이터를 로드하여 전체 시뮬레이션을 실행하고,
+    발생하는 로그를 웹소켓 큐에 담습니다.
+    """
+    def socket_logger(msg):
+        # 스레드 세이프하게 메인 루프의 비동기 큐에 메시지 삽입
+        loop.call_soon_threadsafe(simulation_log_queue.put_nowait, msg)
+
+    try:
+        socket_logger(f"[{symbol} | {timeframe}] 전체 데이터 시뮬레이션 시작...")
+        
+        optimizer = StrategyOptimizer(db_path)
+        optimizer.set_logger(socket_logger) # 로거 교체
+
+        # 1. DB에서 데이터 로드
+        feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
+        df = feed.load_latest_from_db(limit=1000000) 
+        
+        if df is None or df.empty:
+            socket_logger("데이터가 없습니다.")
+            return
+
+        optimizer.run_optimization(df, symbol, timeframe)
+        socket_logger("시뮬레이션 완료")
+
+    except Exception as e:
+        socket_logger(f"오류: {str(e)}")
+
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        socket_logger(f"시뮬레이션 중 치명적 오류 발생: {str(e)}")
+        print(f"Detail Error: {error_msg}")
 
 # Lifespan: 서버 가동 시 상태 메시지 출력
 @asynccontextmanager
@@ -395,6 +435,114 @@ async def get_db_status(symbol: str = "BTCUSDT", timeframe: str = "15m"):
             }
     except Exception as e:
         return {"error": str(e), "message": "데이터베이스 조회 중 오류 발생"}
+    
+# --- [6. 분석 및 최적화 데이터 API (추가)] ---
+
+@app.get("/api/strategy-ranking")
+async def get_strategy_ranking():
+    """
+    DB에 저장된 ml_trading_dataset 테이블을 분석하여 
+    전략 조합별 수익률 및 승률 랭킹을 반환합니다.
+    """
+    if not os.path.exists(db_path):
+        raise HTTPException(status_code=404, detail="데이터베이스 파일을 찾을 수 없습니다.")
+
+    try:
+        query = """
+        SELECT 
+            position_mode, 
+            leverage, 
+            tp_ratio, 
+            sl_ratio,
+            COUNT(*) as total_trades,
+            SUM(CASE WHEN result_status = 'TAKE_PROFIT' THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN result_status = 'STOP_LOSS' THEN 1 ELSE 0 END) as losses,
+            SUM(CASE WHEN result_status = 'TIMEOUT' THEN 1 ELSE 0 END) as timeouts,
+            ROUND(SUM(realized_pnl), 2) as total_pnl,
+            ROUND(AVG(realized_pnl), 2) as avg_pnl,
+            SUM(pyramid_count) as total_pyramid_count
+        FROM ml_trading_dataset
+        GROUP BY position_mode, leverage, tp_ratio, sl_ratio
+        ORDER BY total_pnl DESC;
+        """
+        
+        with sqlite3.connect(db_path) as conn:
+            # pandas를 이용해 쿼리 결과를 데이터프레임으로 변환
+            df = pd.read_sql(query, conn)
+        
+        if df.empty:
+            return {"status": "success", "message": "아직 시뮬레이션 데이터가 없습니다.", "data": []}
+
+        # 승률 계산
+        df['win_rate'] = (df['wins'] / df['total_trades'] * 100).round(2)
+        
+        # 프론트엔드 전송을 위해 리스트로 변환
+        ranking_data = df.to_dict(orient="records")
+        
+        return {
+            "status": "success",
+            "count": len(ranking_data),
+            "data": ranking_data
+        }
+
+    except Exception as e:
+        print(f"[API ERROR] 랭킹 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"데이터 분석 중 오류 발생: {str(e)}")
+
+@app.post("/api/sync-historical")
+async def sync_historical_data_trigger(
+    background_tasks: BackgroundTasks,
+    symbol: str = Query("BTCUSDT"),
+    timeframe: str = Query("15m"),
+    days: int = Query(30)
+):
+    """
+    사용자가 요청한 일수(days)만큼 과거 데이터를 즉시 동기화합니다.
+    시간이 오래 걸릴 수 있으므로 BackgroundTasks로 처리합니다.
+    """
+    try:
+        # 이미 history 로직에서 사용하는 backfill_historical_data 함수를 재활용합니다.
+        # 이 함수는 내부에서 feed.sync_historical_data(start_days=days)를 호출합니다.
+        background_tasks.add_task(backfill_historical_data, symbol, timeframe, days)
+        
+        return {
+            "status": "success",
+            "message": f"[{symbol}] {days}일치 데이터 백필 작업을 백그라운드에서 시작했습니다.",
+            "params": {"symbol": symbol, "timeframe": timeframe, "days": days}
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"동기화 요청 실패: {str(e)}")
+    
+# --- [7. 시뮬레이션 실행 및 로그 API (추가)] ---
+
+@app.post("/api/simulation/run-full")
+async def trigger_full_simulation(
+    background_tasks: BackgroundTasks, 
+    symbol: str = Query("BTCUSDT"), 
+    timeframe: str = Query("15m")
+):
+    """
+    프론트엔드에서 버튼 클릭 시 전체 시뮬레이션을 백그라운드에서 실행합니다.
+    """
+    current_loop = asyncio.get_running_loop() # 현재 실행 중인 메인 루프 획득
+    background_tasks.add_task(run_full_optimization_task, symbol, timeframe, current_loop)
+    return {"status": "success", "message": "시뮬레이션이 시작되었습니다."}
+
+@app.websocket("/ws/simulation/logs")
+async def websocket_simulation_logs(websocket: WebSocket):
+    """
+    시뮬레이션 로그만 전문적으로 중계하는 웹소켓 채널입니다.
+    """
+    await websocket.accept()
+    try:
+        while True:
+            # 큐에 로그가 들어올 때까지 기다렸다가 클라이언트에 전송
+            message = await simulation_log_queue.get()
+            await websocket.send_text(message)
+    except WebSocketDisconnect:
+        print("[WS ⚪] 시뮬레이션 로그 소켓 연결 종료")
+    except Exception as e:
+        print(f"[WS 🔴] 로그 전송 에러: {e}")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

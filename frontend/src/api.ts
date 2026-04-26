@@ -126,3 +126,55 @@ export const simulationApi = {
     return response.data;
   },
 };
+
+// --- [ 3. 전략 분석 및 최적화 관련 API (신규 추가) ] ---
+
+export interface StrategyRank {
+  position_mode: string;
+  leverage: number;
+  tp_ratio: number;
+  sl_ratio: number;
+  total_trades: number;
+  wins: number;
+  losses: number;
+  timeouts: number;
+  total_pnl: number;
+  avg_pnl: number;
+  win_rate: number;
+  total_pyramid_count: number;
+}
+
+export const analysisApi = {
+  // 1. 전략 랭킹 가져오기
+  getRanking: async (): Promise<StrategyRank[]> => {
+    const response = await axios.get(`${API_BASE}/api/strategy-ranking`);
+    return response.data.data;
+  },
+
+  // 2. 전체 시뮬레이션 실행 트리거
+  runFullSimulation: async (symbol: string, timeframe: string) => {
+    const response = await axios.post(
+      `${API_BASE}/api/simulation/run-full`,
+      null,
+      {
+        params: { symbol, timeframe },
+      },
+    );
+    return response.data;
+  },
+
+  // 3. 과거 데이터 동기화 (Days 기반)
+  syncHistoricalData: async (
+    symbol: string,
+    timeframe: string,
+    days: number,
+  ) => {
+    const response = await axios.post(`${API_BASE}/api/sync-historical`, null, {
+      params: { symbol, timeframe, days },
+    });
+    return response.data;
+  },
+
+  // 4. 시뮬레이션 로그 웹소켓 주소 반환 (컴포넌트에서 사용)
+  getLogSocketUrl: () => `${WS_BASE}/ws/simulation/logs`,
+};

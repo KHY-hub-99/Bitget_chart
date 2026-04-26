@@ -58,7 +58,49 @@ class CryptoDataFeed:
                         cursor.execute(f'ALTER TABLE "{self.symbol}" ADD COLUMN {col_name} {col_type}')
                     except Exception:
                         pass
+                    
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS strategy_optimization (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    position_mode TEXT,
+                    leverage INTEGER,
+                    tp_ratio REAL,
+                    sl_ratio REAL,
+                    total_trades INTEGER,
+                    win_rate REAL,
+                    net_profit REAL,
+                    tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ml_trading_dataset (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    signal_time TIMESTAMP,
+                    symbol TEXT,
+                    timeframe TEXT,
+                    signal_type TEXT,
+                    entry_open REAL,
+                    entry_high REAL,
+                    entry_low REAL,
+                    entry_close REAL,
+                    entry_volume REAL,
+                    entry_rsi REAL,
+                    entry_macd REAL,
+                    entry_mfi REAL,
+                    bb_width REAL,
+                    position_mode TEXT,
+                    leverage INTEGER,
+                    tp_ratio REAL,
+                    sl_ratio REAL,
+                    result_status TEXT,
+                    realized_pnl REAL,
+                    duration_candles INTEGER,
+                    pyramid_count INTEGER DEFAULT 0
+                )
+            ''')
             conn.commit()
+            print("[DEBUG] DB 초기화 완료: 최적화 및 ML 데이터 테이블이 준비되었습니다.")
             
     def _fetch_binance_klines(self, start_time=None, end_time=None, limit=1500):
         """바이낸스 선물 API에서 데이터를 직접 가져옵니다."""

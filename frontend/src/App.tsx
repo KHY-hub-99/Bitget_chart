@@ -8,14 +8,20 @@ import { PositionBoard } from "./components/PositionBoard";
 import { useSimulation } from "./hooks/useSimulation";
 import { Toast } from "./components/Toast";
 
+// 🌟 [추가/수정] 신규 컴포넌트 임포트
+import { ReplayControl } from "./components/ReplayControl";
+import SimulationResultsPage from "./components/SimulationResultsPage"; // 경로 확인 필요
+
 function App() {
+  // 뷰 모드 관리 ('chart' | 'results')
+  const [view, setView] = useState<"chart" | "results">("chart");
+
   const [chartData, setChartData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [currentPrice, setCurrentPrice] = useState<number>(0);
 
-  // 🌟 Toast 상태 관리
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "error" | "info";
@@ -35,8 +41,6 @@ function App() {
   const [inputSymbol, setInputSymbol] = useState<string>("BTCUSDT");
   const [inputTimeframe, setInputTimeframe] = useState<string>("15m");
 
-  // 🎯 [수정] activePositions(배열)를 가져옵니다.
-  // 기존 currentPosition도 호환성을 위해 유지할 수 있습니다.
   const {
     status,
     loading,
@@ -45,10 +49,9 @@ function App() {
     checkTick,
     resetSimulation,
     changePositionMode,
-    activePositions, // 복수 포지션 배열
+    activePositions,
   } = useSimulation(symbol);
 
-  // 🌟 무한 새로고침 방지를 위한 Ref 패턴
   const checkTickRef = useRef(checkTick);
   useEffect(() => {
     checkTickRef.current = checkTick;
@@ -66,7 +69,6 @@ function App() {
     setVisibleLayers((prev) => ({ ...prev, [layer]: !prev[layer] }));
   };
 
-  // 1️⃣ 데이터 로딩 및 웹소켓 연결
   useEffect(() => {
     let ws: WebSocket | null = null;
     let isActive = true;
@@ -168,10 +170,28 @@ function App() {
         />
       )}
 
+      {/* 헤더 섹션 */}
       <header style={headerStyle}>
-        <h1 style={logoStyle}>
-          Crypto Trading <span style={{ color: "#2962FF" }}>Master</span>
-        </h1>
+        <div style={{ display: "flex", alignItems: "center", gap: "30px" }}>
+          <h1 style={logoStyle}>
+            Crypto Trading <span style={{ color: "#2962FF" }}>Master</span>
+          </h1>
+          <nav style={{ display: "flex", gap: "5px" }}>
+            <button
+              style={view === "chart" ? activeNavBtnStyle : navBtnStyle}
+              onClick={() => setView("chart")}
+            >
+              차트 분석
+            </button>
+            <button
+              style={view === "results" ? activeNavBtnStyle : navBtnStyle}
+              onClick={() => setView("results")}
+            >
+              전략 랭킹
+            </button>
+          </nav>
+        </div>
+
         <div
           style={{
             ...statusBadgeStyle,
@@ -192,108 +212,163 @@ function App() {
         </div>
       </header>
 
-      {/* 툴바 및 레이어 설정 (생략 가능) */}
-      <div style={toolbarStyle}>
-        <div style={filterGroupStyle}>
-          <span style={labelStyle}>Market:</span>
-          <select
-            style={selectStyle}
-            value={inputSymbol}
-            onChange={(e) => setInputSymbol(e.target.value)}
-          >
-            <option value="BTCUSDT">BTC/USDT</option>
-            <option value="ETHUSDT">ETH/USDT</option>
-          </select>
-        </div>
-        <div style={filterGroupStyle}>
-          <span style={labelStyle}>Time:</span>
-          <select
-            style={selectStyle}
-            value={inputTimeframe}
-            onChange={(e) => setInputTimeframe(e.target.value)}
-          >
-            <option value="1m">1m</option>
-            <option value="5m">5m</option>
-            <option value="15m">15m</option>
-            <option value="1h">1h</option>
-          </select>
-        </div>
-        <button style={btnStyle} onClick={handleApplySettings}>
-          적용
-        </button>
-      </div>
-
-      <div style={layerToggleStyle}>
-        {Object.entries(visibleLayers).map(([key, isVisible]) => (
-          <label key={key} style={checkboxLabelStyle}>
-            <input
-              type="checkbox"
-              checked={isVisible}
-              onChange={() => toggleLayer(key as any)}
-            />
-            {key.toUpperCase()}
-          </label>
-        ))}
-      </div>
-
+      {/* 메인 콘텐츠 영역 */}
       <main className="app-main" style={mainStyle}>
-        {error ? (
-          <div style={centerMsgStyle}>
-            <h3 style={{ color: "#ef5350" }}>{error}</h3>
-          </div>
-        ) : isLoading || !chartData ? (
-          <div style={centerMsgStyle}>LOADING...</div>
-        ) : (
-          <>
+        {view === "chart" ? (
+          /* --- [1] 차트 분석 뷰 --- */
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              flex: 1,
+              overflow: "hidden",
+            }}
+          >
+            <div style={toolbarStyle}>
+              <div style={filterGroupStyle}>
+                <span style={labelStyle}>Market:</span>
+                <select
+                  style={selectStyle}
+                  value={inputSymbol}
+                  onChange={(e) => setInputSymbol(e.target.value)}
+                >
+                  <option value="BTCUSDT">BTC/USDT</option>
+                  <option value="ETHUSDT">ETH/USDT</option>
+                </select>
+              </div>
+              <div style={filterGroupStyle}>
+                <span style={labelStyle}>Time:</span>
+                <select
+                  style={selectStyle}
+                  value={inputTimeframe}
+                  onChange={(e) => setInputTimeframe(e.target.value)}
+                >
+                  <option value="1m">1m</option>
+                  <option value="5m">5m</option>
+                  <option value="15m">15m</option>
+                  <option value="1h">1h</option>
+                </select>
+              </div>
+              <button style={btnStyle} onClick={handleApplySettings}>
+                적용
+              </button>
+            </div>
+
+            <div style={layerToggleStyle}>
+              {Object.entries(visibleLayers).map(([key, isVisible]) => (
+                <label key={key} style={checkboxLabelStyle}>
+                  <input
+                    type="checkbox"
+                    checked={isVisible}
+                    onChange={() => toggleLayer(key as any)}
+                  />
+                  {key.toUpperCase()}
+                </label>
+              ))}
+            </div>
+
             <div
-              className="chart-section"
-              style={{ flex: 2, minHeight: "450px" }}
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+              }}
             >
-              {/* 🎯 [수정] TradingChart에 activePositions 전달 */}
-              <TradingChart
-                key={`${symbol}-${timeframe}`}
-                data={chartData}
-                settings={visibleLayers}
-                symbol={symbol}
-                activePositions={activePositions}
-              />
-            </div>
+              {error ? (
+                <div style={centerMsgStyle}>
+                  <h3 style={{ color: "#ef5350" }}>{error}</h3>
+                </div>
+              ) : isLoading || !chartData ? (
+                <div style={centerMsgStyle}>LOADING...</div>
+              ) : (
+                <>
+                  <div
+                    className="chart-section"
+                    style={{ flex: 2, minHeight: "450px" }}
+                  >
+                    <TradingChart
+                      key={`${symbol}-${timeframe}`}
+                      data={chartData}
+                      settings={visibleLayers}
+                      symbol={symbol}
+                      activePositions={activePositions}
+                    />
+                  </div>
 
-            <div className="bottom-section" style={bottomSectionStyle}>
-              <div
-                className="position-section"
-                style={{ flex: 1.5, borderRight: "1px solid #2a2e39" }}
-              >
-                <PositionBoard
-                  currentPrice={currentPrice}
-                  activeSymbol={symbol}
-                  status={status}
-                  closeMarketPosition={closeMarketPosition}
-                />
-              </div>
+                  <div className="bottom-section" style={bottomSectionStyle}>
+                    <div
+                      className="position-section"
+                      style={{ flex: 1.5, borderRight: "1px solid #2a2e39" }}
+                    >
+                      <PositionBoard
+                        currentPrice={currentPrice}
+                        activeSymbol={symbol}
+                        status={status}
+                        closeMarketPosition={closeMarketPosition}
+                      />
+                    </div>
 
-              <div className="order-section" style={{ flex: 1 }}>
-                {/* 🎯 [수정] OrderPanel에 activePositions(배열) 전달 */}
-                <OrderPanel
-                  currentPrice={currentPrice}
-                  placeMarketOrder={placeMarketOrder}
-                  resetSimulation={resetSimulation}
-                  changePositionMode={handleModeChange}
-                  positionMode={status?.position_mode ?? "ONE_WAY"}
-                  loading={loading}
-                  activePositions={activePositions}
-                  availableBalance={status?.available_balance ?? 0}
-                />
-              </div>
+                    <div className="order-section" style={{ flex: 1 }}>
+                      <OrderPanel
+                        currentPrice={currentPrice}
+                        placeMarketOrder={placeMarketOrder}
+                        resetSimulation={resetSimulation}
+                        changePositionMode={handleModeChange}
+                        positionMode={status?.position_mode ?? "ONE_WAY"}
+                        loading={loading}
+                        activePositions={activePositions}
+                        availableBalance={status?.available_balance ?? 0}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-          </>
+          </div>
+        ) : (
+          /* --- [2] 전략 랭킹 및 시뮬레이션 제어 뷰 --- */
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              overflowY: "auto",
+              backgroundColor: "#0b0e14",
+            }}
+          >
+            {/* 상단: 시뮬레이션 로그 및 데이터 관리 */}
+            <ReplayControl symbol={symbol} timeframe={timeframe} />
+
+            {/* 하단: DB에 저장된 시뮬레이션 결과 랭킹 테이블 */}
+            <SimulationResultsPage />
+          </div>
         )}
       </main>
     </div>
   );
 }
 
-// 스타일 객체는 기존 코드와 동일하여 유지...
+// --- [ 스타일 설정 ] ---
+
+const navBtnStyle: React.CSSProperties = {
+  backgroundColor: "transparent",
+  color: "#848e9c",
+  border: "none",
+  padding: "8px 16px",
+  borderRadius: "4px",
+  cursor: "pointer",
+  fontSize: "0.9rem",
+  fontWeight: 600,
+  transition: "all 0.2s",
+};
+
+const activeNavBtnStyle: React.CSSProperties = {
+  ...navBtnStyle,
+  color: "#2962FF",
+  backgroundColor: "rgba(41, 98, 255, 0.1)",
+};
+
 const appContainerStyle: React.CSSProperties = {
   width: "100vw",
   height: "100vh",

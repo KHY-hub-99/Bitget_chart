@@ -12,6 +12,9 @@ def apply_master_strategy(
     """
     BTC 마스터 최종 통합 전략 (변수명 표준화 적용)
     """
+    if df.empty:
+        print("[DEBUG] 데이터가 비어 있어 전략을 계산할 수 없습니다.")
+        return df
     df = df.copy()
 
     # === [1. 일목균형표 계산] ===
