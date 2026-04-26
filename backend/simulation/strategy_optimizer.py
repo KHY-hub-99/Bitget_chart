@@ -148,14 +148,15 @@ class StrategyOptimizer:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
+                # [수정] INSERT INTO -> INSERT OR REPLACE INTO 변경
                 cursor.executemany("""
-                    INSERT INTO ml_trading_dataset 
+                    INSERT OR REPLACE INTO ml_trading_dataset 
                     (signal_time, symbol, timeframe, signal_type, entry_open, entry_high, entry_low, entry_close, entry_volume, 
                     entry_rsi, entry_macd, entry_mfi, bb_width, position_mode, leverage, tp_ratio, sl_ratio, 
                     result_status, realized_pnl, duration_candles, pyramid_count, mdd_rate)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, records)
                 conn.commit()
-            self.logger(f"[DB] {len(records)}건의 시뮬레이션 결과 저장 완료.")
+            self.logger(f"[DB] {len(records)}건의 데이터 저장/갱신 완료.")
         except Exception as e:
             self.logger(f"[DB] 저장 실패: {e}")

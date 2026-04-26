@@ -58,46 +58,28 @@ class CryptoDataFeed:
                         cursor.execute(f'ALTER TABLE "{self.symbol}" ADD COLUMN {col_name} {col_type}')
                     except Exception:
                         pass
-                    
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS strategy_optimization (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    position_mode TEXT,
-                    leverage INTEGER,
-                    tp_ratio REAL,
-                    sl_ratio REAL,
-                    total_trades INTEGER,
-                    win_rate REAL,
-                    net_profit REAL,
-                    tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
             
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ml_trading_dataset (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     signal_time TIMESTAMP,           -- 신호 발생 시간
-                    symbol TEXT,                     -- 코인 심볼 (예: BTCUSDT)
-                    timeframe TEXT,                  -- 타임프레임 (예: 15m)
-                    signal_type TEXT,                -- 신호 종류 (MASTER_LONG/SHORT)
-                    entry_open REAL,                 -- 진입 당시 시가
-                    entry_high REAL,                 -- 진입 당시 고가
-                    entry_low REAL,                  -- 진입 당시 저가
-                    entry_close REAL,                -- 진입 당시 종가
-                    entry_volume REAL,               -- 진입 당시 거래량
-                    entry_rsi REAL,                  -- 보조지표: RSI
-                    entry_macd REAL,                 -- 보조지표: MACD
-                    entry_mfi REAL,                  -- 보조지표: MFI
-                    bb_width REAL,                   -- 보조지표: 볼린저 밴드 너비
-                    position_mode TEXT,              -- 포지션 모드 (ONE_WAY/HEDGE)
+                    symbol TEXT,                     -- 코인 심볼
+                    timeframe TEXT,                  -- 타임프레임
+                    signal_type TEXT,                -- 신호 종류
+                    entry_open REAL, entry_high REAL, entry_low REAL, entry_close REAL, entry_volume REAL,
+                    entry_rsi REAL, entry_macd REAL, entry_mfi REAL, bb_width REAL,
+                    position_mode TEXT,              -- 포지션 모드
                     leverage INTEGER,                -- 사용 레버리지
-                    tp_ratio REAL,                   -- 익절 비율 설정값
-                    sl_ratio REAL,                   -- 손절 비율 설정값
-                    result_status TEXT,              -- 결과 (TAKE_PROFIT, STOP_LOSS, LIQUIDATED, SWITCHED 등)
-                    realized_pnl REAL,               -- 수수료 및 슬리피지가 제외된 최종 순수익
+                    tp_ratio REAL,                   -- 익절 비율
+                    sl_ratio REAL,                   -- 손절 비율
+                    result_status TEXT,              -- 결과
+                    realized_pnl REAL,               -- 최종 순수익
                     duration_candles INTEGER,        -- 포지션 유지 봉 개수
-                    pyramid_count INTEGER DEFAULT 0, -- 불타기(추가 진입) 횟수
-                    mdd_rate REAL DEFAULT 0          -- 포지션 유지 중 겪은 최대 낙폭 비율 (%)
+                    pyramid_count INTEGER DEFAULT 0, -- 불타기 횟수
+                    mdd_rate REAL DEFAULT 0,         -- 최대 낙폭 비율
+                    
+                    -- [추가] 중복 체크 기준 설정: 시간 + 심볼 + 타임프레임 + 전략 파라미터가 같으면 중복으로 간주
+                    UNIQUE(signal_time, symbol, timeframe, position_mode, leverage, tp_ratio, sl_ratio) ON CONFLICT REPLACE
                 )
             ''')
             conn.commit()
