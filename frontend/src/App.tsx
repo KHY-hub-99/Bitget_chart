@@ -352,10 +352,12 @@ function App() {
               backgroundColor: "#0b0e14",
             }}
           >
-            {/* 상단: 시뮬레이션 로그 및 데이터 관리 */}
-            <MemoizedReplayControl symbol={symbol} timeframe={timeframe} />
+            {/* initialSymbol, initialTimeframe으로 전달하여 초기값 설정 */}
+            <MemoizedReplayControl
+              initialSymbol={symbol}
+              initialTimeframe={timeframe}
+            />
 
-            {/* 하단: DB에 저장된 시뮬레이션 결과 랭킹 테이블 */}
             <MemoizedResultsPage />
           </div>
         )}
