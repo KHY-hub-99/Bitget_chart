@@ -215,9 +215,25 @@ async def close_position(symbol: str = Query(...)):
 
 @app.post("/api/simulation/tick")
 async def process_price_tick(req: TickRequest):
-    """가격 변동 시 청산/익절/손절 감시"""
+    """가격 변동 시 PNL 업데이트 및 청산/익절/손절 감시"""
+    
+    # 1. 해당 심볼의 포지션이 있다면 실시간 PNL 및 시장가(Mark Price) 업데이트
+    if req.symbol in sim_wallet.positions:
+        pos = sim_wallet.positions[req.symbol]
+        # 이전에 만든 모델의 update_pnl 함수 호출 (self.mark_price 갱신 포함)
+        pos.update_pnl(Decimal(str(req.current_price)))
+
+    # 2. 청산/익절/손절 트리거 감시 (기존 로직)
     result = sim_engine.check_triggers(sim_wallet, req.symbol, req.current_price)
-    return {"tick_result": result}
+    
+    # 3. 지갑 잔액 동기화 (Margin 및 Available Balance 재계산)
+    sim_wallet.sync_balances()
+
+    # 4. 업데이트된 지갑 상태(wallet)를 결과와 함께 반환
+    return {
+        "tick_result": result,
+        "wallet": sim_wallet  # 이제 프론트엔드가 이 데이터를 받아 화면을 갱신함
+    }
 
 @app.post("/api/simulation/reset")
 async def reset_simulation():

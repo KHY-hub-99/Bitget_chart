@@ -59,14 +59,23 @@ function App() {
           if (!isActive) return;
           setIsLive(true);
 
+          // 1️⃣ [사이드 이펙트 처리] 웹소켓 데이터가 도착하자마자 가격부터 추출합니다.
+          if (newData.candles && newData.candles.length > 0) {
+            const lastCandle = newData.candles[newData.candles.length - 1];
+            const lastPrice = lastCandle.close;
+
+            // 🌟 setState 밖에서 실행해야 정상적으로 상태가 전파됩니다.
+            setCurrentPrice(lastPrice);
+            sim.checkTick(lastPrice); // 백엔드에 틱을 쏘고, 지갑 상태(Mark Price)를 갱신함
+          }
+
+          // 2️⃣ [차트 데이터 업데이트] 이후에 차트의 캔들과 지표를 병합합니다.
           setChartData((prev: any) => {
             if (!newData || !newData.candles || newData.candles.length === 0)
               return prev;
 
-            // 심볼이 바뀌었으면 새 데이터로 완전히 교체
             if (!prev || prev.symbol !== symbol) return { ...newData, symbol };
 
-            // --- 🌟 [병합 도우미 함수] ---
             const mergeByTime = (prevArr: any[], nextArr: any[]) => {
               const map = new Map();
               (prevArr || []).forEach((item) => map.set(item.time, item));
@@ -74,10 +83,8 @@ function App() {
               return Array.from(map.values()).sort((a, b) => a.time - b.time);
             };
 
-            // 1. 캔들 병합
             const mergedCandles = mergeByTime(prev.candles, newData.candles);
 
-            // 2. 🌟 지표(Indicators) 병합 (중요!)
             const mergedIndicators = { ...prev.indicators };
             if (newData.indicators) {
               Object.keys(newData.indicators).forEach((key) => {
@@ -88,22 +95,18 @@ function App() {
               });
             }
 
-            // 3. 🌟 마커(Markers) 병합 (매수/매도 신호 유지)
             const mergedMarkers = mergeByTime(
               prev.markers || [],
               newData.markers || [],
             );
 
-            // 실시간 가격 및 틱 체크
-            const lastPrice = mergedCandles[mergedCandles.length - 1].close;
-            setCurrentPrice(lastPrice);
-            sim.checkTick(lastPrice);
+            // ❌ 여기서 setCurrentPrice나 sim.checkTick을 지웠습니다!
 
             return {
               ...prev,
               candles: mergedCandles,
-              indicators: mergedIndicators, // 👈 최신 데이터로 덮어쓰지 않고 병합된 데이터 전달
-              markers: mergedMarkers, // 👈 마커도 병합하여 전달
+              indicators: mergedIndicators,
+              markers: mergedMarkers,
             };
           });
         });
@@ -118,7 +121,7 @@ function App() {
       isActive = false;
       if (ws) ws.close();
     };
-  }, [symbol, timeframe]);
+  }, [symbol, timeframe, days]); // days도 의존성에 추가하는 것이 안전합니다.
 
   const handleApplySettings = () => {
     setSymbol(inputSymbol);

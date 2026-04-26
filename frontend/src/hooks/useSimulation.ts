@@ -62,10 +62,19 @@ export const useSimulation = (symbol: string) => {
     async (price: number) => {
       try {
         const result = await simulationApi.processTick(symbol, price);
-        // 포지션이 청산되거나 TP/SL에 닿아 상태가 변했다면 새로고침
+
+        // 백엔드에서 전달받은 최신 지갑(wallet) 정보를 상태에 반영
+        // 이 순간 PositionBoard의 Mark Price와 PNL이 즉시 바뀝니다.
+        if (result.wallet) {
+          setStatus(result.wallet);
+        }
+
+        // 만약 청산이나 TP/SL로 포지션이 닫혔다면(RUNNING이 아니라면)
+        // 전체 상태를 다시 한번 정밀하게 새로고침
         if (result.tick_result && result.tick_result.status !== "RUNNING") {
           await refreshStatus();
         }
+
         return result;
       } catch (error) {
         console.error("Tick 업데이트 실패", error);
