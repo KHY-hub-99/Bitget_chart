@@ -100,9 +100,15 @@ const SimulationResultsPage: React.FC = () => {
               onChange={(e) => setSymbol(e.target.value)}
               style={selectStyle}
             >
-              <option value="ALL">전체 심볼</option>
-              <option value="BTCUSDT">BTCUSDT</option>
-              <option value="ETHUSDT">ETHUSDT</option>
+              <option value="ALL" style={optionStyle}>
+                전체 심볼
+              </option>
+              <option value="BTCUSDT" style={optionStyle}>
+                BTCUSDT
+              </option>
+              <option value="ETHUSDT" style={optionStyle}>
+                ETHUSDT
+              </option>
             </select>
           </div>
 
@@ -113,11 +119,21 @@ const SimulationResultsPage: React.FC = () => {
               onChange={(e) => setTimeframe(e.target.value)}
               style={selectStyle}
             >
-              <option value="ALL">전체 시간</option>
-              <option value="1m">1m</option>
-              <option value="5m">5m</option>
-              <option value="15m">15m</option>
-              <option value="1h">1h</option>
+              <option value="ALL" style={optionStyle}>
+                전체 시간
+              </option>
+              <option value="1m" style={optionStyle}>
+                1m
+              </option>
+              <option value="5m" style={optionStyle}>
+                5m
+              </option>
+              <option value="15m" style={optionStyle}>
+                15m
+              </option>
+              <option value="1h" style={optionStyle}>
+                1h
+              </option>
             </select>
           </div>
 
@@ -386,13 +402,21 @@ const labelStyle: React.CSSProperties = {
 };
 
 const selectStyle: React.CSSProperties = {
-  backgroundColor: "transparent",
+  backgroundColor: "#1e222d", // 투명 대신 명시적 배경색
   color: "#fff",
   border: "none",
   outline: "none",
   cursor: "pointer",
   fontSize: "0.9rem",
   fontWeight: 600,
+  appearance: "none", // 브라우저 기본 화살표 제거 (필요시)
+  padding: "2px 4px",
+};
+
+// option 태그에 적용할 스타일 (일축해서 select 내부에서 사용)
+const optionStyle = {
+  backgroundColor: "#1e222d",
+  color: "#fff",
 };
 
 const tableWrapperStyle: React.CSSProperties = {
