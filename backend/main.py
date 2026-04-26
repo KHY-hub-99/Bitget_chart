@@ -42,8 +42,9 @@ def preload_initial_market_data():
 
             # 데이터가 아예 없거나, 오래되었으면 동기화 실행
             if feed.df.empty or is_outdated:
-                print(f"[STARTUP] {sym} ({tf}) 데이터 업데이트 필요 -> API 호출")
-                feed.sync_recent_data(required_limit=5000)
+                print(f"[STARTUP] {sym} ({tf}) 데이터 업데이트 필요 -> 스마트 동기화 실행")
+                # 매개변수를 비워두면(None), 내부에서 자동으로 공백을 계산합니다.
+                feed.sync_recent_data() 
             else:
                 print(f"[STARTUP] {sym} ({tf}) 최신 상태 유지 중 -> 지표만 갱신")
                 feed.refresh_indicators()

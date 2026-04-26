@@ -219,28 +219,64 @@ class CryptoDataFeed:
         self.save_enriched_df(self.df)
         print(f"[{self.symbol}] {len(self.df)}행의 지표가 DB에 성공적으로 반영되었습니다.")
             
-    def sync_recent_data(self, required_limit=5000):
+    def sync_recent_data(self, required_limit=None, fallback_limit=5000):
         """
-        [프론트엔드용] 
-        현재 시간부터 역방향(과거)으로 필요한 캔들 수만큼만 즉시 수집합니다.
+        [스마트 동기화] 
+        DB의 마지막 저장 시점부터 현재까지의 공백을 계산하여 자동으로 수집합니다.
+        required_limit을 직접 입력하면 해당 개수만큼 강제 수집합니다.
         """
-        print(f"[{self.symbol}] UI 렌더링용 최신 {required_limit}개 캔들 역방향 동기화...")
+        # 1. 타임프레임별 밀리초(ms) 간격 정의
+        tf_ms_map = {
+            "1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000, "4h": 14400000, "1d": 86400000
+        }
+        interval_ms = tf_ms_map.get(self.timeframe, 900000) # 기본값 15분
+
+        # 2. 동적 리미트 계산 (공백 메우기)
+        if required_limit is None:
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    # DB에서 가장 최근에 저장된 캔들의 시간을 가져옴
+                    cursor.execute(f'SELECT MAX(time) FROM "{self.symbol}" WHERE timeframe = ?', (self.timeframe,))
+                    max_time = cursor.fetchone()[0]
+
+                if max_time:
+                    now_ms = int(time.time() * 1000)
+                    gap_ms = now_ms - max_time
+                    
+                    # (현재 시간 - 마지막 시간) / 봉 간격 = 누락된 캔들 수
+                    # 지표 계산을 위해 여유분 20개를 추가합니다.
+                    calculated_limit = int(gap_ms / interval_ms) + 20
+                    required_limit = max(calculated_limit, 100) # 최소 100개는 가져오도록 설정
+                    print(f"[{self.symbol}] 마지막 데이터 이후 {int(gap_ms/60000)}분 경과. {required_limit}개 동기화 필요.")
+                else:
+                    # DB가 완전히 비어있을 때
+                    required_limit = fallback_limit
+            except Exception as e:
+                print(f"[{self.symbol}] 공백 계산 중 오류 발생, 기본값 사용: {e}")
+                required_limit = fallback_limit
+
+        # 3. 데이터 수집 루프 (기존 로직 최적화)
+        print(f"[{self.symbol}] {self.timeframe} 최신 {required_limit}개 캔들 역방향 수집 시작...")
         end_ts = int(time.time() * 1000)
         total_fetched = 0
         
         while total_fetched < required_limit:
-            # 역방향으로 1500개씩 호출
-            klines = self._fetch_binance_klines(end_time=end_ts, limit=1500)
-            if not klines: break
+            # 남은 개수만큼만 요청 (최대 1500개)
+            fetch_now = min(1500, required_limit - total_fetched)
+            klines = self._fetch_binance_klines(end_time=end_ts, limit=fetch_now)
+            
+            if not klines: 
+                break
             
             self._save_raw_ohlcv(klines)
             total_fetched += len(klines)
             
-            # 🎯 받아온 데이터 중 가장 오래된 캔들의 시간 - 1ms 를 다음 끝 시간으로 설정!
+            # 다음 호출을 위해 시간축 이동 (가장 오래된 캔들 이전으로)
             end_ts = klines[0][0] - 1
-            time.sleep(0.05)
+            time.sleep(0.05) # 바이낸스 API 보호를 위한 짧은 대기
             
-        # 최신 데이터만 빠르게 계산 완료
+        # 4. 수집 완료 후 지표 재계산
         self.refresh_indicators()
         
     def sync_historical_data(self, start_days=365):
