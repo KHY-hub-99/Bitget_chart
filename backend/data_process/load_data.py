@@ -248,75 +248,32 @@ class CryptoDataFeed:
             print(f"최적화 결과 저장/업데이트 에러: {e}")
 
     # --- 기존의 보조 메서드들 ---
-    def sync_historical_data(self, start_days=730):
-        """
-        기존 _fetch_binance_klines를 활용하거나 직접 호출하여 
-        지정된 날짜만큼의 과거 데이터를 루프를 돌며 채웁니다.
-        """
-        import time
-        from datetime import datetime, timezone, timedelta
-
-        print(f"\n[{self.symbol} | {self.timeframe}] {start_days}일치 과거 데이터 백필 시작...")
-        
-        # 1. 시작 시간 설정 (현재로부터 n일 전)
-        end_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
-        start_ts = int((datetime.now(timezone.utc) - timedelta(days=start_days)).timestamp() * 1000)
-        current_ts = start_ts
-        total_count = 0
-
-        while current_ts < end_ts:
-            # 바이낸스 선물 API klines 호출 (최대 1000개씩)
-            params = {
-                "symbol": self.symbol,
-                "interval": self.timeframe,
-                "startTime": current_ts,
-                "limit": 1000
-            }
-            
-            try:
-                response = requests.get(f"{self.base_url}/fapi/v1/klines", params=params, timeout=10)
-                data = response.json()
-                
-                if not data or len(data) <= 1:
-                    break
-                
-                # 원시 데이터 저장 (이미 구현된 _save_raw_ohlcv 활용)
-                self._save_raw_ohlcv(data)
-                
-                # 다음 구간 설정을 위해 마지막 데이터 시간 업데이트
-                last_ts = data[-1][0]
-                current_ts = last_ts + 1
-                total_count += len(data)
-                
-                print(f" > [{self.symbol}] {len(data)}개 추가 수집... (현재 시각: {pd.to_datetime(last_ts, unit='ms')})")
-                
-                # API 부하 방지 및 속도 조절
-                time.sleep(0.1) 
-                
-                # 만약 가져온 마지막 시각이 현재 시각과 가깝다면 종료
-                if last_ts >= end_ts - 60000: # 1분 이내 차이
-                    break
-                    
-            except Exception as e:
-                print(f"[ERROR] {self.symbol} 백필 중 오류 발생: {e}")
-                break
-
-        print(f"[{self.symbol}] 총 {total_count}개의 과거 캔들 동기화 완료.")
-        
-        # 데이터 수집이 끝났으므로 전체 지표 재계산 (CamelCase 표준 적용)
-        self.refresh_indicators()
-
     def sync_recent_data(self, required_limit=5000):
         """
-        [UX 최적화] 최근 5,000개 데이터를 빠르게 채워 차트를 즉시 활성화합니다.
-        바이낸스 1회 호출 제한(1000개)을 우회하기 위해 루프를 사용합니다.
+        [UX 최적화] 최근 5,000개 데이터를 체크하여 부족할 때만 API를 호출합니다.
         """
-        print(f"[{self.symbol}] 차트용 최신 데이터 {required_limit}개 우선 수집 시작...")
+        print(f"\n[CHECK] {self.symbol} ({self.timeframe}) 최근 데이터 상태 확인 중...")
+        
+        # 1. DB에 저장된 데이터 개수 확인
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(f'SELECT COUNT(*) FROM "{self.symbol}" WHERE timeframe = ?', (self.timeframe,))
+                count = cursor.fetchone()[0]
+        except Exception:
+            count = 0
+
+        # 2. 이미 데이터가 충분하다면 API 호출 생략 (SKIP)
+        if count >= required_limit:
+            print(f"  >>> [SKIP] {self.symbol} 이미 {count}건의 데이터가 DB에 존재합니다. API 호출을 생략합니다.")
+            return
+
+        # 3. 부족할 경우만 API 호출 (API CALL)
+        print(f"  >>> [API CALL] {self.symbol} DB 데이터({count}건)가 부족하여 최신 {required_limit}개를 수집합니다.")
         
         current_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
         total_fetched = 0
 
-        # 5,000개를 다 채울 때까지 최대 1,000개씩 역순(Backward) 수집
         while total_fetched < required_limit:
             params = {
                 "symbol": self.symbol,
@@ -324,30 +281,75 @@ class CryptoDataFeed:
                 "endTime": current_ts,
                 "limit": 1000
             }
-            
             try:
                 response = requests.get(f"{self.base_url}/fapi/v1/klines", params=params, timeout=10)
                 klines = response.json()
-                
                 if not klines: break
 
-                self._save_raw_ohlcv(klines)
-                
+                self._save_raw_ohlcv(klines) # UPSERT 로직으로 중복 자동 방지
                 total_fetched += len(klines)
-                # 다음 루프를 위해 가져온 데이터 중 가장 오래된 시간의 -1ms 지점으로 이동
                 current_ts = klines[0][0] - 1 
                 
-                print(f" > [{self.symbol}] {total_fetched}/{required_limit}개 수집 중...")
-                
-                # 우선순위 수집은 '초고속'이 생명이므로 최소한의 대기만 함
+                print(f"    > [API] {total_fetched}/{required_limit} 수집 중... ({pd.to_datetime(current_ts, unit='ms')})")
                 time.sleep(0.1) 
-                
             except Exception as e:
-                print(f"[ERROR] 우선순위 수집 중단: {e}")
+                print(f"    >>> [API ERROR] {e}")
                 break
 
-        print(f"[{self.symbol}] 우선순위 데이터 {total_fetched}개 확보 완료.")
-        # 차트 전시를 위해 즉시 지표 계산 실행
+        print(f"  >>> [SUCCESS] {self.symbol} 우선순위 데이터 확보 완료.")
+        self.refresh_indicators()
+
+    def sync_historical_data(self, start_days=730):
+        """
+        [스마트 백필] DB의 가장 오래된 시간을 체크하여 설정일(730일)까지의 빈틈만 API로 채웁니다.
+        """
+        print(f"\n[CHECK] {self.symbol} ({self.timeframe}) 과거 {start_days}일치 백필 상태 확인 중...")
+        
+        target_ts = int((datetime.now(timezone.utc) - timedelta(days=start_days)).timestamp() * 1000)
+
+        # 1. DB에서 가장 오래된 데이터 시간 확인
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(f'SELECT MIN(time) FROM "{self.symbol}" WHERE timeframe = ?', (self.timeframe,))
+                db_min = cursor.fetchone()[0]
+        except Exception:
+            db_min = None
+
+        # 2. 이미 목표 시간보다 더 과거 데이터가 있다면 (SKIP)
+        if db_min and db_min <= target_ts:
+            print(f"  >>> [SKIP] {self.symbol} 이미 목표 시점({pd.to_datetime(target_ts, unit='ms')}) 이전 데이터가 확보되어 있습니다.")
+            return
+
+        # 3. 데이터가 아예 없거나 부족하면 그 지점부터 백필 (API CALL)
+        current_ts = db_min - 1 if db_min else int(datetime.now(timezone.utc).timestamp() * 1000)
+        print(f"  >>> [API CALL] {self.symbol} 부족한 과거 구간 백필 시작 (목표: {pd.to_datetime(target_ts, unit='ms')})")
+        
+        total_count = 0
+        while current_ts > target_ts:
+            params = {
+                "symbol": self.symbol,
+                "interval": self.timeframe,
+                "endTime": current_ts,
+                "limit": 1000
+            }
+            try:
+                response = requests.get(f"{self.base_url}/fapi/v1/klines", params=params, timeout=10)
+                data = response.json()
+                if not data or len(data) <= 1: break
+                
+                self._save_raw_ohlcv(data)
+                first_ts = data[0][0]
+                current_ts = first_ts - 1
+                total_count += len(data)
+                
+                print(f"    > [API] {total_count}개 과거 데이터 수집 중... ({pd.to_datetime(first_ts, unit='ms')})")
+                time.sleep(0.1) 
+            except Exception as e:
+                print(f"    >>> [API ERROR] {e}")
+                break
+
+        print(f"  >>> [SUCCESS] {self.symbol} 총 {total_count}개 과거 데이터 동기화 완료.")
         self.refresh_indicators()
     
     def _fetch_binance_klines(self, start_time=None, end_time=None, limit=1000):
@@ -370,15 +372,26 @@ class CryptoDataFeed:
             conn.commit()
 
     def load_latest_from_db(self, limit=5000):
-        with sqlite3.connect(self.db_path) as conn:
-            query = f'SELECT * FROM "{self.symbol}" WHERE timeframe = "{self.timeframe}" ORDER BY time DESC LIMIT {limit}'
-            df = pd.read_sql(query, conn)
-            if df.empty: return pd.DataFrame()
-            df = df.sort_values('time')
-            df['time'] = pd.to_datetime(df['time'], unit='ms')
-            df.set_index('time', inplace=True)
-            self.df = df.drop(columns=['timeframe'], errors='ignore')
-            return self.df
+        """DB에서 데이터를 가져올 때 로그를 남깁니다."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                query = f'SELECT * FROM "{self.symbol}" WHERE timeframe = ? ORDER BY time DESC LIMIT ?'
+                df = pd.read_sql_query(query, conn, params=(self.timeframe, limit))
+                
+            if not df.empty:
+                # [디버깅 로그] DB에서 몇 건을 가져왔는지 출력
+                print(f"  >>> [DATABASE] {self.symbol} DB에서 {len(df)}건 로드 완료.")
+                df['time'] = pd.to_datetime(df['time'], unit='ms')
+                df.set_index('time', inplace=True)
+                df = df.sort_index()
+                self.df = df
+                return df
+            else:
+                print(f"  >>> [DATABASE] {self.symbol} DB가 비어있습니다. API 호출이 필요합니다.")
+                return None
+        except Exception as e:
+            print(f"  >>> [DATABASE ERROR] {e}")
+            return None
 
     def refresh_indicators(self):
         with sqlite3.connect(self.db_path) as conn:
