@@ -11,20 +11,63 @@
 
 ---
 
-### 📋 변수명 통일 규칙 (Standard)
+### pine_data.py 생성 컬럼명 리스트 (Standard CamelCase)
 
-| 분류                         | 세부 항목            | 변수명                                                             |
-| :--------------------------- | :------------------- | :----------------------------------------------------------------- |
-| **1. 파라미터 (Parameters)** | 일목균형표           | `tenkanLen`, `kijunLen`, `senkouBLen`, `displacement`              |
-|                              | 보조지표             | `rsiLen`, `mfiLen`, `bbLen`, `bbMult`, `volMult`, `whaleLen`       |
-| **2. 보조지표 (Indicators)** | 일목균형표           | `tenkan`, `kijun`, `senkouA`, `senkouB`, `cloudTop`, `cloudBottom` |
-|                              | Whale(세력) & 거래량 | `sma224`, `vwma224`, `volConfirm`                                  |
-|                              | RSI & MFI            | `rsi`, `mfi`                                                       |
-|                              | MACD                 | `macdLine`, `signalLine`                                           |
-|                              | 볼린저 밴드          | `bbUpper`, `bbMid`, `bbLower`                                      |
-| **3. 매매 신호 (Signals)**   | 진입 조건 및 시그널  | `longCondition`, `shortCondition`, `longSig`, `shortSig`           |
-|                              | 역추세 세부 신호     | `bearishDiv`, `bullishDiv`, `extremeTop`, `extremeBottom`          |
-|                              | 최종 매매 신호       | `TOP`, `BOTTOM`                                                    |
+**일목균형표 (Ichimoku)**
+
+- `tenkan`
+- `kijun`
+- `senkouA`
+- `senkouB`
+- `cloudTop`
+- `cloudBottom`
+
+**Whale 세력선 및 거래량**
+
+- `sma224`
+- `vwma224`
+- `volConfirm`
+
+**기술적 지표 (RSI, MFI, MACD, BB)**
+
+- `rsi`
+- `mfi`
+- `macdLine`
+- `signalLine`
+- `bbLower`
+- `bbMid`
+- `bbUpper`
+
+**SMC 구조 및 가격 레벨**
+
+- `swingHighLevel`
+- `swingLowLevel`
+- `equilibrium`
+
+**역추세 세부 신호 및 마커**
+
+- `bearishDiv`
+- `bullishDiv`
+- `extremeTop`
+- `extremeBottom`
+- `TOP`
+- `BOTTOM`
+
+**하이브리드 전략 세부 진입 규칙 (Rule 1 & Rule 2)**
+
+- `entryVwmaLong`
+- `entrySmcLong`
+- `entryVwmaShort`
+- `entrySmcShort`
+
+**매매 조건 및 최종 확정 시그널**
+
+- `longCondition`
+- `shortCondition`
+- `longSig`
+- `shortSig`
+
+---
 
 ### 📂 폴더 구조 (Folder Structure)
 

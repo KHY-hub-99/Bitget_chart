@@ -20,7 +20,7 @@ class CryptoDataFeed:
         self._init_db()
         
     def _init_db(self):
-        """테이블과 모든 지표 및 ML/전략 최적화 데이터셋 컬럼을 생성합니다. (표준 적용)"""
+        """테이블과 모든 지표 및 ML/전략 최적화 데이터셋 컬럼을 생성합니다. (표준 CamelCase 적용)"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -34,7 +34,7 @@ class CryptoDataFeed:
                 )
             """)
             
-            # pine_data.py에서 생성되는 모든 컬럼 리스트 정의 (변수명 통일 규칙 적용)
+            # 제공해주신 표준 CamelCase 리스트로 컬럼 정의
             indicator_columns = [
                 # 일목균형표 및 구름대
                 ('tenkan', 'REAL'), ('kijun', 'REAL'), 
@@ -45,17 +45,20 @@ class CryptoDataFeed:
                 # 기술적 지표
                 ('rsi', 'REAL'), ('mfi', 'REAL'),
                 ('macdLine', 'REAL'), ('signalLine', 'REAL'),
-                ('bbUpper', 'REAL'), ('bbMid', 'REAL'), ('bbLower', 'REAL'),
-                # [추가] SMC 가격 레벨 (시뮬레이션 SL 및 50% 익절 기준선)
+                ('bbLower', 'REAL'), ('bbMid', 'REAL'), ('bbUpper', 'REAL'),
+                # SMC 구조 및 가격 레벨
                 ('swingHighLevel', 'REAL'), ('swingLowLevel', 'REAL'), ('equilibrium', 'REAL'),
                 # 매매 조건 및 확정 시그널
                 ('longCondition', 'INTEGER'), ('shortCondition', 'INTEGER'),
                 ('longSig', 'INTEGER'), ('shortSig', 'INTEGER'),
+                # 하이브리드 전략 세부 진입 규칙 (Rule 1 & Rule 2)
+                ('entryVwmaLong', 'INTEGER'), ('entrySmcLong', 'INTEGER'),
+                ('entryVwmaShort', 'INTEGER'), ('entrySmcShort', 'INTEGER'),
                 # 역추세 세부 신호 및 최종 마커
                 ('bearishDiv', 'INTEGER'), ('bullishDiv', 'INTEGER'),
                 ('extremeTop', 'INTEGER'), ('extremeBottom', 'INTEGER'),
                 ('TOP', 'INTEGER'), ('BOTTOM', 'INTEGER'),
-                # SMC 구조 분석 지표 (선택적 시각화용)
+                # SMC 구조 분석 지표 (추가 시각화용)
                 ('fvgBullish', 'INTEGER'), ('fvgBearish', 'INTEGER'),
                 ('swingBOS', 'INTEGER'), ('swingCHOCH', 'INTEGER'),
                 ('internalBOS', 'INTEGER'), ('internalCHOCH', 'INTEGER')
@@ -73,64 +76,49 @@ class CryptoDataFeed:
             
             # 2. ML 데이터셋 테이블 생성 (학습용 상세 데이터)
             cursor.execute('''
-                -- 1. AI 학습용 상세 데이터셋 테이블
                 CREATE TABLE IF NOT EXISTS ml_trading_dataset (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    signal_time TIMESTAMP,           
-                    symbol TEXT,                     
-                    timeframe TEXT,                  
-                    signal_type TEXT,                
+                    signalTime TIMESTAMP, symbol TEXT, timeframe TEXT, signalType TEXT,
                     
-                    -- X 데이터
-                    entry_open REAL, entry_high REAL, entry_low REAL, entry_close REAL, entry_volume REAL,
-                    entry_tenkan REAL, entry_kijun REAL, entry_cloudTop REAL, entry_cloudBottom REAL,
-                    entry_rsi REAL, entry_macdLine REAL, entry_signalLine REAL, entry_mfi REAL,
-                    entry_sma224 REAL, entry_vwma224 REAL, bb_width REAL,
-                    entry_equilibrium REAL, entry_smc_sl REAL,
+                    -- X 데이터 (진입 시점의 지표 피처)
+                    entryOpen REAL, entryHigh REAL, entryLow REAL, entryClose REAL, entryVolume REAL,
+                    entryTenkan REAL, entryKijun REAL, entrySenkouA REAL, entrySenkouB REAL,
+                    entryCloudTop REAL, entryCloudBottom REAL,
+                    entryRsi REAL, entryMfi REAL, entryMacdLine REAL, entrySignalLine REAL,
+                    entryBbUpper REAL, entryBbMid REAL, entryBbLower REAL,
+                    entrySma224 REAL, entryVwma224 REAL, 
+                    entrySwingHighLevel REAL, entrySwingLowLevel REAL, entryEquilibrium REAL,
+
+                    -- 진입 근거 및 규칙 (Rule 1 & Rule 2)
+                    entryVwmaLong INTEGER, entrySmcLong INTEGER, 
+                    entryVwmaShort INTEGER, entrySmcShort INTEGER,
                     
-                    -- 시뮬레이션 설정
-                    position_mode TEXT,              
-                    leverage INTEGER,                
-                    margin_ratio REAL,   -- 0.33, 0.5 등             
-                    applied_sl_ratio REAL, -- 동적으로 계산된 손절 %
-                    sl_tag TEXT,           -- RULE_1_ROE or RULE_2_SMC
+                    -- 시뮬레이션 설정 파라미터
+                    positionMode TEXT, leverage INTEGER, marginRatio REAL,
+                    appliedSlRatio REAL, slTag TEXT, 
                     
-                    -- Y 라벨
-                    result_status TEXT,              
-                    realized_pnl REAL,               
-                    duration_candles INTEGER,        
-                    pyramid_count INTEGER DEFAULT 0, 
-                    mdd_rate REAL DEFAULT 0,         
+                    -- Y 라벨 (매매 결과)
+                    resultStatus TEXT, realizedPnl REAL, durationCandles INTEGER,
+                    pyramidCount INTEGER DEFAULT 0, mddRate REAL DEFAULT 0,
                     
-                    -- UNIQUE 제약조건 수정
-                    UNIQUE(signal_time, symbol, timeframe, position_mode, leverage, margin_ratio) ON CONFLICT REPLACE
+                    UNIQUE(signalTime, symbol, timeframe, positionMode, leverage, marginRatio) ON CONFLICT REPLACE
+                )
             ''')
 
             # 3. 전략 최적화 최종 통계 테이블 생성 (백테스트 결과 요약)
             cursor.execute('''
-                -- 2. 전략 랭킹용 요약 데이터 테이블
                 CREATE TABLE IF NOT EXISTS strategy_optimization (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    position_mode TEXT,
-                    leverage INTEGER,
-                    margin_ratio REAL,
+                    positionMode TEXT, leverage INTEGER, marginRatio REAL,
                     
-                    total_trades INTEGER,
-                    win_trades INTEGER,
-                    loss_trades INTEGER,
-                    win_rate REAL,
-                    total_pnl REAL,
-                    avg_pnl REAL,
-                    max_drawdown REAL,
-                    avg_duration REAL,
-                    avg_pyramid_count REAL,
-                    tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    totalTrades INTEGER, winTrades INTEGER, lossTrades INTEGER,
+                    winRate REAL, totalPnl REAL, avgPnl REAL,
+                    maxDrawdown REAL, avgDuration REAL, avgPyramidCount REAL,
+                    testedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     
-                    -- UNIQUE 제약조건 수정
-                    UNIQUE(position_mode, leverage, margin_ratio) ON CONFLICT REPLACE
+                    UNIQUE(positionMode, leverage, marginRatio) ON CONFLICT REPLACE
                 )
             ''')
-            
             conn.commit()
 
     def save_enriched_df(self, df_calc):

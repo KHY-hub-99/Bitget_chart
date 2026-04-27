@@ -117,14 +117,15 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     is_above = (df['low'] > df['vwma224']).rolling(window=4).all()
     is_below = (df['high'] < df['vwma224']).rolling(window=4).all()
     
-    rule1_long = is_above.shift(1) & (df['low'] <= df['vwma224'])
-    rule2_long = (df['low'] <= df['swingLowLevel'] * 1.005) & (df['low'] >= df['swingLowLevel'])
+    # [수정됨] 하이브리드 SL을 위해 개별 룰을 데이터프레임 컬럼으로 할당
+    df['entryVwmaLong'] = is_above.shift(1) & (df['low'] <= df['vwma224'])
+    df['entrySmcLong'] = (df['low'] <= df['swingLowLevel'] * 1.005) & (df['low'] >= df['swingLowLevel'])
     
-    rule1_short = is_below.shift(1) & (df['high'] >= df['vwma224'])
-    rule2_short = (df['high'] >= df['swingHighLevel'] * 0.995) & (df['high'] <= df['swingHighLevel'])
+    df['entryVwmaShort'] = is_below.shift(1) & (df['high'] >= df['vwma224'])
+    df['entrySmcShort'] = (df['high'] >= df['swingHighLevel'] * 0.995) & (df['high'] <= df['swingHighLevel'])
 
-    df['longCondition'] = rule1_long | rule2_long
-    df['shortCondition'] = rule1_short | rule2_short
+    df['longCondition'] = df['entryVwmaLong'] | df['entrySmcLong']
+    df['shortCondition'] = df['entryVwmaShort'] | df['entrySmcShort']
 
     # 최종 매매 신호 (Sig) - 조건 충족 시 첫 캔들에서만 발생
     df['longSig'] = df['longCondition'] & ~df['longCondition'].shift(1).fillna(False)
