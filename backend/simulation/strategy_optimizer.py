@@ -96,12 +96,14 @@ class StrategyOptimizer:
 
                 future_df = df_sim.iloc[pos_idx + 1 : pos_idx + 201]
                 result_status, duration, final_pnl, pyramid_count = "TIMEOUT", 0, Decimal('0'), 0
+                
                 min_unrealized_pnl = Decimal('0')
+                # 해당 포지션에 투입된 전체 증거금을 추적하기 위한 변수 추가
+                max_allocated_margin = actual_margin 
 
                 for f_row in future_df.itertuples():
                     duration += 1
                     curr_p = Decimal(str(f_row.close))
-                    # 꼬리 가격 추출
                     high_p = Decimal(str(f_row.high))
                     low_p = Decimal(str(f_row.low))
                     
@@ -132,7 +134,6 @@ class StrategyOptimizer:
                                 (side == PositionSide.SHORT and m_short)
                     if same_signal and pos_key in wallet.positions:
                         
-                        # 불타기 시 동적 증거금 적용
                         calc_pyramid_margin = wallet.total_balance * margin_ratio
                         actual_pyramid_margin = min(calc_pyramid_margin, wallet.available_balance)
                         
@@ -141,6 +142,8 @@ class StrategyOptimizer:
                                 wallet, symbol, side, curr_p, lev, actual_pyramid_margin, tp_p, sl_p
                             )
                             pyramid_count += 1
+                            # 물타기에 성공할 때마다 누적 투입 금액 합산
+                            max_allocated_margin += actual_pyramid_margin 
 
                     # 엔진의 check_triggers에 High/Low 가격 전달
                     res_list = self.engine.check_triggers(
@@ -156,9 +159,9 @@ class StrategyOptimizer:
                         final_pnl = Decimal(str(res_list[0].get('realized_pnl', 0)))
                         break
                 
-                # MDD 비율 계산: 하드코딩 1000이 아닌 초기 실제 투입 증거금 기준
-                if actual_margin > 0:
-                    mdd_rate = (min_unrealized_pnl / actual_margin) * 100 
+                # MDD 비율 계산: 분모를 누적된 '최대 투입 증거금'으로 변경
+                if max_allocated_margin > 0:
+                    mdd_rate = (min_unrealized_pnl / max_allocated_margin) * 100 
                 else:
                     mdd_rate = 0
 
