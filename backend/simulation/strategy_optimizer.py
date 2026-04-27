@@ -52,11 +52,9 @@ class StrategyOptimizer:
         signal_positions = df_sim[(df_sim['master_long'] == True) | (df_sim['master_short'] == True)].index
         total_signals = len(signal_positions)
 
-        # [수정 1] UI 멈춤 방지: 모든 로그를 보내지 않고 진행률을 10개 단위로 스로틀링(Throttling)
         for idx, pos_idx in enumerate(signal_positions):
             if idx % 20 == 0 or idx == total_signals - 1:
                 self.logger(f"[진행도] {symbol} {timeframe} 분석 중... ({idx + 1}/{total_signals})")
-                # [추가] 0.01초만 쉬어줘도 웹소켓이 로그를 보낼 수 있는 숨통이 트입니다.
                 import time
                 time.sleep(0.1)
 
@@ -70,9 +68,16 @@ class StrategyOptimizer:
             for mode, lev, tp_r, sl_r in combinations:
                 wallet = Wallet(initial_balance=Decimal('10000'), position_mode=mode)
                 
-                # 초기 진입 가격 설정
-                tp_p = entry_price * (Decimal('1') + Decimal(str(tp_r))) if side == PositionSide.LONG else entry_price * (Decimal('1') - Decimal(str(tp_r)))
-                sl_p = entry_price * (Decimal('1') - Decimal(str(sl_r))) if side == PositionSide.LONG else entry_price * (Decimal('1') + Decimal(str(sl_r)))
+                # 레버리지를 반영하여 실제 코인 가격의 목표 변동률 계산
+                price_change_ratio_tp = Decimal(str(tp_r)) / Decimal(str(lev))
+                price_change_ratio_sl = Decimal(str(sl_r)) / Decimal(str(lev))
+
+                if side == PositionSide.LONG:
+                    tp_p = entry_price * (Decimal('1') + price_change_ratio_tp)
+                    sl_p = entry_price * (Decimal('1') - price_change_ratio_sl)
+                else:
+                    tp_p = entry_price * (Decimal('1') - price_change_ratio_tp)
+                    sl_p = entry_price * (Decimal('1') + price_change_ratio_sl)
 
                 # 초기 포지션 진입
                 self.engine.open_position(
@@ -85,12 +90,13 @@ class StrategyOptimizer:
                 result_status, duration, final_pnl, pyramid_count = "TIMEOUT", 0, Decimal('0'), 0
                 min_unrealized_pnl = Decimal('0')
 
-                # [수정 2] 속도 최적화를 위해 itertuples 사용
                 for f_row in future_df.itertuples():
                     duration += 1
                     curr_p = Decimal(str(f_row.close))
+                    # 꼬리 가격 추출
+                    high_p = Decimal(str(f_row.high))
+                    low_p = Decimal(str(f_row.low))
                     
-                    # [수정 3] getattr 사용: itertuples는 namedtuple이므로 .get() 대신 getattr 사용
                     m_long = getattr(f_row, 'master_long', False)
                     m_short = getattr(f_row, 'master_short', False)
                     
@@ -103,8 +109,7 @@ class StrategyOptimizer:
                         if pos_obj.unrealized_pnl < min_unrealized_pnl:
                             min_unrealized_pnl = pos_obj.unrealized_pnl
 
-                    # [수정 4] 단방향(ONE_WAY) 모드 스위칭 명확화
-                    # 해당 신호에 대한 추적을 종료하고 스위칭 PNL을 정확히 기록하기 위해 직접 종료 호출
+                    # [단방향 스위칭 검사]
                     if mode == PositionMode.ONE_WAY:
                         opp_signal = (side == PositionSide.LONG and m_short) or \
                                     (side == PositionSide.SHORT and m_long)
@@ -112,23 +117,29 @@ class StrategyOptimizer:
                             res = self.engine._close_position(wallet, pos_key, curr_p, "SWITCHED")
                             result_status = "SWITCHED"
                             final_pnl = Decimal(str(res.get('realized_pnl', 0)))
-                            break # 스위칭 발생 시 해당 신호 관찰 종료
+                            break 
 
-                    # [수정 5] 불타기(Pyramiding) 로직 
+                    # [불타기 (Pyramiding) 로직]
                     same_signal = (side == PositionSide.LONG and m_long) or \
                                 (side == PositionSide.SHORT and m_short)
                     if same_signal and pos_key in wallet.positions:
                         self.engine.open_position(wallet, symbol, side, curr_p, lev, Decimal('1000'), tp_p, sl_p)
                         pyramid_count += 1
 
-                    # [트리거 감시] 강제청산/익절/손절 체크
-                    res_list = self.engine.check_triggers(wallet, symbol, curr_p)
+                    # 💡 [핵심 수정 3] 엔진의 check_triggers에 High/Low 가격 전달
+                    res_list = self.engine.check_triggers(
+                        wallet=wallet, 
+                        symbol=symbol, 
+                        current_price=curr_p, 
+                        high_price=high_p, 
+                        low_price=low_p
+                    )
+                    
                     if res_list:
                         result_status = res_list[0]['status']
                         final_pnl = Decimal(str(res_list[0].get('realized_pnl', 0)))
                         break
                 
-                # MDD Rate = (포지션 중 최대 손실액 / 투입 증거금) * 100
                 mdd_rate = (min_unrealized_pnl / Decimal('1000')) * 100
 
                 # 데이터 수집
@@ -148,7 +159,6 @@ class StrategyOptimizer:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                # [수정] INSERT INTO -> INSERT OR REPLACE INTO 변경
                 cursor.executemany("""
                     INSERT OR REPLACE INTO ml_trading_dataset 
                     (signal_time, symbol, timeframe, signal_type, entry_open, entry_high, entry_low, entry_close, entry_volume, 

@@ -517,6 +517,10 @@ async def get_simulation_replay(
 
     for row in df.itertuples():
         curr_p = Decimal(str(row.close))
+        
+        #캔들의 꼬리 가격(High, Low)을 추출합니다.
+        high_p = Decimal(str(row.high))
+        low_p = Decimal(str(row.low))
 
         if hasattr(row, 'Index') and pd.notnull(row.Index):
             ts = int(row.Index.timestamp())
@@ -526,12 +530,20 @@ async def get_simulation_replay(
         m_long = getattr(row, 'master_long', False)
         m_short = getattr(row, 'master_short', False)
 
-        res_list = engine.check_triggers(temp_wallet, symbol, curr_p)
+        # 엔진에 High와 Low 가격을 같이 넘겨주어 꼬리 청산/손절을 완벽하게 잡아냅니다.
+        res_list = engine.check_triggers(
+            wallet=temp_wallet, 
+            symbol=symbol, 
+            current_price=curr_p, 
+            high_price=high_p, 
+            low_price=low_p
+        )
+        
         if res_list:
             for res in res_list:
                 markers.append({
                     "time": ts,
-                    "action": "SELL",
+                    "action": "SELL" if res.get('reason') != 'LIQUIDATED' else "LIQUIDATED",
                     "price": float(res.get('price', curr_p)),
                     "reason": res.get('status', 'CLOSED')
                 })
@@ -551,13 +563,32 @@ async def get_simulation_replay(
             side = PositionSide.LONG if m_long else PositionSide.SHORT
             action = "BUY" if side == PositionSide.LONG else "SELL"
 
-            tp_p = curr_p * (Decimal('1') + Decimal(str(tp_ratio))) if side == PositionSide.LONG else curr_p * (Decimal('1') - Decimal(str(tp_ratio)))
-            sl_p = curr_p * (Decimal('1') - Decimal(str(sl_ratio))) if side == PositionSide.LONG else curr_p * (Decimal('1') + Decimal(str(sl_ratio)))
+            # 레버리지를 반영하여 실제 코인 가격의 목표 변동률을 계산합니다!
+            # 예: ROE 5% 목표, 레버리지 10x -> 실제 코인 가격은 0.5%만 움직여도 도달
+            price_change_ratio_tp = Decimal(str(tp_ratio)) / Decimal(str(leverage))
+            price_change_ratio_sl = Decimal(str(sl_ratio)) / Decimal(str(leverage))
+
+            if side == PositionSide.LONG:
+                tp_p = curr_p * (Decimal('1') + price_change_ratio_tp)
+                sl_p = curr_p * (Decimal('1') - price_change_ratio_sl)
+            else:
+                tp_p = curr_p * (Decimal('1') - price_change_ratio_tp)
+                sl_p = curr_p * (Decimal('1') + price_change_ratio_sl)
 
             pos_key = engine._get_position_key(symbol, side, pos_mode)
             is_pyramid = pos_key in temp_wallet.positions
 
-            engine.open_position(temp_wallet, symbol, side, curr_p, leverage, Decimal('1000'), tp_p, sl_p)
+            # 계산된 정확한 가격(tp_p, sl_p)을 넘겨줍니다.
+            engine.open_position(
+                wallet=temp_wallet, 
+                symbol=symbol, 
+                side=side, 
+                entry_price=curr_p, 
+                leverage=leverage, 
+                margin=Decimal('1000'), 
+                take_profit=tp_p, 
+                stop_loss=sl_p
+            )
 
             markers.append({
                 "time": ts,
