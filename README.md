@@ -13,19 +13,29 @@
 
 ### 📋 변수명 통일 규칙 (Standard)
 
-일목균형표: kijun, senkou_a, senkou_b
+1. 파라미터 (Parameters)
 
-```
-RSI: rsi
+- 일목균형표: tenkan_len, kijun_len, senkou_b_len, displacement
+- 보조지표: rsi_len, mfi_len, bb_len, bb_mult, vol_mult, whale_len
+- SMC 설정: swing_len, fvg_threshold
 
-MACD: macd_line, macd_sig
+2. 보조지표 (Indicators)
 
-볼린저 밴드: bb_upper, bb_middle, bb_lower
+- 일목균형표: tenkan, kijun, senkou_a, senkou_b, cloud_top, cloud_bottom
+- Whale(세력) & 거래량: sma_224, vwma_224, vol_confirm
+- RSI & MFI: rsi, mfi
+- MACD: macd_line, macd_sig
+- 볼린저 밴드: bb_upper, bb_middle, bb_lower
 
-매매 신호: master_long, master_short, top_detected, bottom_detected (모두 소문자)
-```
+3. 스마트 머니 컨셉 (SMC)
 
----
+- 공정가치 갭: fvg_bullish, fvg_bearish
+- 구조적 스윙: swing_high, swing_low
+
+4. 매매 신호 (Signals)
+
+- 역추세 세부 신호: bearish_div, bullish_div, extreme_top, extreme_bottom
+- 최종 매매 신호: master_long, master_short, top_detected, bottom_detected (모두 소문자)
 
 ### 📂 폴더 구조 (Folder Structure)
 
