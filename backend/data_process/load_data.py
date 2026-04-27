@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import sqlite3
 import os
+import time
+from datetime import datetime, timezone, timedelta
 from data_process.pine_data import apply_master_strategy
 
 class CryptoDataFeed:
@@ -246,7 +248,74 @@ class CryptoDataFeed:
             print(f"최적화 결과 저장/업데이트 에러: {e}")
 
     # --- 기존의 보조 메서드들 ---
-    def _fetch_binance_klines(self, start_time=None, end_time=None, limit=1500):
+    def sync_historical_data(self, start_days=730):
+        """
+        기존 _fetch_binance_klines를 활용하거나 직접 호출하여 
+        지정된 날짜만큼의 과거 데이터를 루프를 돌며 채웁니다.
+        """
+        import time
+        from datetime import datetime, timezone, timedelta
+
+        print(f"\n[{self.symbol} | {self.timeframe}] {start_days}일치 과거 데이터 백필 시작...")
+        
+        # 1. 시작 시간 설정 (현재로부터 n일 전)
+        end_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+        start_ts = int((datetime.now(timezone.utc) - timedelta(days=start_days)).timestamp() * 1000)
+        current_ts = start_ts
+        total_count = 0
+
+        while current_ts < end_ts:
+            # 바이낸스 선물 API klines 호출 (최대 1000개씩)
+            params = {
+                "symbol": self.symbol,
+                "interval": self.timeframe,
+                "startTime": current_ts,
+                "limit": 1000
+            }
+            
+            try:
+                response = requests.get(f"{self.base_url}/fapi/v1/klines", params=params, timeout=10)
+                data = response.json()
+                
+                if not data or len(data) <= 1:
+                    break
+                
+                # 원시 데이터 저장 (이미 구현된 _save_raw_ohlcv 활용)
+                self._save_raw_ohlcv(data)
+                
+                # 다음 구간 설정을 위해 마지막 데이터 시간 업데이트
+                last_ts = data[-1][0]
+                current_ts = last_ts + 1
+                total_count += len(data)
+                
+                print(f" > [{self.symbol}] {len(data)}개 추가 수집... (현재 시각: {pd.to_datetime(last_ts, unit='ms')})")
+                
+                # API 부하 방지 및 속도 조절
+                time.sleep(0.1) 
+                
+                # 만약 가져온 마지막 시각이 현재 시각과 가깝다면 종료
+                if last_ts >= end_ts - 60000: # 1분 이내 차이
+                    break
+                    
+            except Exception as e:
+                print(f"[ERROR] {self.symbol} 백필 중 오류 발생: {e}")
+                break
+
+        print(f"[{self.symbol}] 총 {total_count}개의 과거 캔들 동기화 완료.")
+        
+        # 데이터 수집이 끝났으므로 전체 지표 재계산 (CamelCase 표준 적용)
+        self.refresh_indicators()
+
+    def sync_recent_data(self, required_limit=5000):
+        """
+        최근 부족한 데이터(예: 5000개)를 빠르게 채울 때 사용합니다.
+        """
+        klines = self._fetch_binance_klines(limit=required_limit)
+        if klines:
+            self._save_raw_ohlcv(klines)
+            self.refresh_indicators()
+    
+    def _fetch_binance_klines(self, start_time=None, end_time=None, limit=1000):
         endpoint = "/fapi/v1/klines"
         params = {"symbol": self.symbol, "interval": self.timeframe, "limit": limit}
         if start_time: params["startTime"] = start_time
