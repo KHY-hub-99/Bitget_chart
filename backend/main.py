@@ -72,7 +72,7 @@ def preload_initial_market_data():
     timeframes = ["15m", "30m", "1h", "4h"]
     
     print("\n" + "="*60)
-    print("[STARTUP] 지정된 5개 타임프레임의 365일 데이터 동기화 시작...")
+    print(f"[STARTUP] 지정된 {len(timeframes)}개 타임프레임의 365일 데이터 동기화 시작...")
     print("="*60)
 
     for sym in symbols:
