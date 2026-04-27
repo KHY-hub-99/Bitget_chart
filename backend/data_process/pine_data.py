@@ -122,16 +122,22 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     df['BOTTOM'] = df['bullishDiv'] | df['extremeBottom']
     
     # 진입 조건 (Condition) - 룰 1(이평선 터치) 및 룰 2(SMC 박스권) 결합
-    is_above = (df['low'] > df['vwma224']).rolling(window=4).all()
-    is_below = (df['high'] < df['vwma224']).rolling(window=4).all()
+    is_above = (df['low'] > df['vwma224']).rolling(window=4).min() == 1
+    is_below = (df['high'] < df['vwma224']).rolling(window=4).min() == 1
     
-    # [수정됨] 하이브리드 SL을 위해 개별 룰을 데이터프레임 컬럼으로 할당
+    # [수정] 이전 버전과의 호환성을 위해 .fillna(False) 추가
+    is_above = is_above.fillna(False)
+    is_below = is_below.fillna(False)
+    
+    # 룰 1: 이평선 이격 후 터치 (CamelCase 표준 적용)
     df['entryVwmaLong'] = is_above.shift(1) & (df['low'] <= df['vwma224'])
-    df['entrySmcLong'] = (df['low'] <= df['swingLowLevel'] * 1.005) & (df['low'] >= df['swingLowLevel'])
-    
     df['entryVwmaShort'] = is_below.shift(1) & (df['high'] >= df['vwma224'])
+    
+    # 룰 2: SMC 구조적 바닥/천장 진입 (CamelCase 표준 적용)
+    df['entrySmcLong'] = (df['low'] <= df['swingLowLevel'] * 1.005) & (df['low'] >= df['swingLowLevel'])
     df['entrySmcShort'] = (df['high'] >= df['swingHighLevel'] * 0.995) & (df['high'] <= df['swingHighLevel'])
 
+    # 최종 조건 결합
     df['longCondition'] = df['entryVwmaLong'] | df['entrySmcLong']
     df['shortCondition'] = df['entryVwmaShort'] | df['entrySmcShort']
 
