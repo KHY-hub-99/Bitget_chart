@@ -35,7 +35,7 @@ class StrategyOptimizer:
         df_sim = df.reset_index(drop=False)
         time_col = 'time' if 'time' in df_sim.columns else 'timestamp' if 'timestamp' in df_sim.columns else 'index'
         
-        # 1. 시뮬레이션 파라미터 설정
+        # 시뮬레이션 파라미터 설정
         modes = [PositionMode.ONE_WAY, PositionMode.HEDGE]
         leverages = [3, 5, 10, 20, 50]
         tp_rates = [0.01, 0.02, 0.03, 0.05, 0.10]
@@ -47,6 +47,9 @@ class StrategyOptimizer:
             combinations.append((mode, lev, tp, sl))
             
         self.logger(f"[INFO] {symbol} {timeframe} 최적화 시작 (조합: {len(combinations)}개)")
+        
+        # 동적 증거금 비율 설정 (총 자산의 10%)
+        margin_ratio = Decimal('0.10')
         
         ml_data_batch = [] 
         signal_positions = df_sim[(df_sim['master_long'] == True) | (df_sim['master_short'] == True)].index
@@ -79,12 +82,17 @@ class StrategyOptimizer:
                     tp_p = entry_price * (Decimal('1') - price_change_ratio_tp)
                     sl_p = entry_price * (Decimal('1') + price_change_ratio_sl)
 
-                # 초기 포지션 진입
-                self.engine.open_position(
-                    wallet=wallet, symbol=symbol, side=side, entry_price=entry_price,
-                    leverage=lev, margin=Decimal('1000'),
-                    take_profit=tp_p, stop_loss=sl_p
-                )
+                # 초기 진입 시 동적 증거금 계산 (잔고 초과 방지)
+                calculated_margin = wallet.total_balance * margin_ratio
+                actual_margin = min(calculated_margin, wallet.available_balance)
+
+                # 초기 포지션 진입 (최소 주문 금액 방어 - 10 USDT 이상일 때만 진입)
+                if actual_margin >= Decimal('10'):
+                    self.engine.open_position(
+                        wallet=wallet, symbol=symbol, side=side, entry_price=entry_price,
+                        leverage=lev, margin=actual_margin,
+                        take_profit=tp_p, stop_loss=sl_p
+                    )
 
                 future_df = df_sim.iloc[pos_idx + 1 : pos_idx + 201]
                 result_status, duration, final_pnl, pyramid_count = "TIMEOUT", 0, Decimal('0'), 0
@@ -123,8 +131,16 @@ class StrategyOptimizer:
                     same_signal = (side == PositionSide.LONG and m_long) or \
                                 (side == PositionSide.SHORT and m_short)
                     if same_signal and pos_key in wallet.positions:
-                        self.engine.open_position(wallet, symbol, side, curr_p, lev, Decimal('1000'), tp_p, sl_p)
-                        pyramid_count += 1
+                        
+                        # 불타기 시 동적 증거금 적용
+                        calc_pyramid_margin = wallet.total_balance * margin_ratio
+                        actual_pyramid_margin = min(calc_pyramid_margin, wallet.available_balance)
+                        
+                        if actual_pyramid_margin >= Decimal('10'):
+                            self.engine.open_position(
+                                wallet, symbol, side, curr_p, lev, actual_pyramid_margin, tp_p, sl_p
+                            )
+                            pyramid_count += 1
 
                     # 엔진의 check_triggers에 High/Low 가격 전달
                     res_list = self.engine.check_triggers(
@@ -140,7 +156,11 @@ class StrategyOptimizer:
                         final_pnl = Decimal(str(res_list[0].get('realized_pnl', 0)))
                         break
                 
-                mdd_rate = (min_unrealized_pnl / Decimal('1000')) * 100
+                # MDD 비율 계산: 하드코딩 1000이 아닌 초기 실제 투입 증거금 기준
+                if actual_margin > 0:
+                    mdd_rate = (min_unrealized_pnl / actual_margin) * 100 
+                else:
+                    mdd_rate = 0
 
                 # 데이터 수집
                 ml_data_batch.append((
