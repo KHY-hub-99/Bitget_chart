@@ -13,29 +13,18 @@
 
 ### 📋 변수명 통일 규칙 (Standard)
 
-1. 파라미터 (Parameters)
-
-- 일목균형표: tenkan_len, kijun_len, senkou_b_len, displacement
-- 보조지표: rsi_len, mfi_len, bb_len, bb_mult, vol_mult, whale_len
-- SMC 설정: swing_len, fvg_threshold
-
-2. 보조지표 (Indicators)
-
-- 일목균형표: tenkan, kijun, senkou_a, senkou_b, cloud_top, cloud_bottom
-- Whale(세력) & 거래량: sma_224, vwma_224, vol_confirm
-- RSI & MFI: rsi, mfi
-- MACD: macd_line, macd_sig
-- 볼린저 밴드: bb_upper, bb_middle, bb_lower
-
-3. 스마트 머니 컨셉 (SMC)
-
-- 공정가치 갭: fvg_bullish, fvg_bearish
-- 구조적 스윙: swing_high, swing_low
-
-4. 매매 신호 (Signals)
-
-- 역추세 세부 신호: bearish_div, bullish_div, extreme_top, extreme_bottom
-- 최종 매매 신호: master_long, master_short, top_detected, bottom_detected (모두 소문자)
+| 분류                         | 세부 항목            | 변수명                                                             |
+| :--------------------------- | :------------------- | :----------------------------------------------------------------- |
+| **1. 파라미터 (Parameters)** | 일목균형표           | `tenkanLen`, `kijunLen`, `senkouBLen`, `displacement`              |
+|                              | 보조지표             | `rsiLen`, `mfiLen`, `bbLen`, `bbMult`, `volMult`, `whaleLen`       |
+| **2. 보조지표 (Indicators)** | 일목균형표           | `tenkan`, `kijun`, `senkouA`, `senkouB`, `cloudTop`, `cloudBottom` |
+|                              | Whale(세력) & 거래량 | `sma224`, `vwma224`, `volConfirm`                                  |
+|                              | RSI & MFI            | `rsi`, `mfi`                                                       |
+|                              | MACD                 | `macdLine`, `signalLine`                                           |
+|                              | 볼린저 밴드          | `bbUpper`, `bbMid`, `bbLower`                                      |
+| **3. 매매 신호 (Signals)**   | 진입 조건 및 시그널  | `longCondition`, `shortCondition`, `longSig`, `shortSig`           |
+|                              | 역추세 세부 신호     | `bearishDiv`, `bullishDiv`, `extremeTop`, `extremeBottom`          |
+|                              | 최종 매매 신호       | `TOP`, `BOTTOM`                                                    |
 
 ### 📂 폴더 구조 (Folder Structure)
 
