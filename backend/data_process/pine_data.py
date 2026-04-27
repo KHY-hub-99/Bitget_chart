@@ -50,9 +50,17 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     
     # 볼린저 밴드
     bb = ta.bbands(df['close'], length=bbLen, std=bbMult)
-    df['bbLower'] = bb[f'BBL_{bbLen}_{bbMult}']
-    df['bbMid'] = bb[f'BBM_{bbLen}_{bbMult}']
-    df['bbUpper'] = bb[f'BBU_{bbLen}_{bbMult}']
+    if bb is not None and not bb.empty:
+        # pandas_ta의 bbands 결과 순서: 0:Lower, 1:Mid, 2:Upper
+        df['bbLower'] = bb.iloc[:, 0]
+        df['bbMid'] = bb.iloc[:, 1]
+        df['bbUpper'] = bb.iloc[:, 2]
+    else:
+        # 데이터가 부족하여 계산되지 않았을 경우 결측치 처리
+        df['bbLower'] = np.nan
+        df['bbMid'] = np.nan
+        df['bbUpper'] = np.nan
+    
 
     # --- [3. SMC 구조 및 상태 계산 (내부 로직)] ---
     swingHigh, swingLow = Pivot(), Pivot()
