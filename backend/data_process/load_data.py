@@ -308,12 +308,47 @@ class CryptoDataFeed:
 
     def sync_recent_data(self, required_limit=5000):
         """
-        최근 부족한 데이터(예: 5000개)를 빠르게 채울 때 사용합니다.
+        [UX 최적화] 최근 5,000개 데이터를 빠르게 채워 차트를 즉시 활성화합니다.
+        바이낸스 1회 호출 제한(1000개)을 우회하기 위해 루프를 사용합니다.
         """
-        klines = self._fetch_binance_klines(limit=required_limit)
-        if klines:
-            self._save_raw_ohlcv(klines)
-            self.refresh_indicators()
+        print(f"[{self.symbol}] 차트용 최신 데이터 {required_limit}개 우선 수집 시작...")
+        
+        current_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+        total_fetched = 0
+
+        # 5,000개를 다 채울 때까지 최대 1,000개씩 역순(Backward) 수집
+        while total_fetched < required_limit:
+            params = {
+                "symbol": self.symbol,
+                "interval": self.timeframe,
+                "endTime": current_ts,
+                "limit": 1000
+            }
+            
+            try:
+                response = requests.get(f"{self.base_url}/fapi/v1/klines", params=params, timeout=10)
+                klines = response.json()
+                
+                if not klines: break
+
+                self._save_raw_ohlcv(klines)
+                
+                total_fetched += len(klines)
+                # 다음 루프를 위해 가져온 데이터 중 가장 오래된 시간의 -1ms 지점으로 이동
+                current_ts = klines[0][0] - 1 
+                
+                print(f" > [{self.symbol}] {total_fetched}/{required_limit}개 수집 중...")
+                
+                # 우선순위 수집은 '초고속'이 생명이므로 최소한의 대기만 함
+                time.sleep(0.1) 
+                
+            except Exception as e:
+                print(f"[ERROR] 우선순위 수집 중단: {e}")
+                break
+
+        print(f"[{self.symbol}] 우선순위 데이터 {total_fetched}개 확보 완료.")
+        # 차트 전시를 위해 즉시 지표 계산 실행
+        self.refresh_indicators()
     
     def _fetch_binance_klines(self, start_time=None, end_time=None, limit=1000):
         endpoint = "/fapi/v1/klines"

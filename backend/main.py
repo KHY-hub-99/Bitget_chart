@@ -178,6 +178,14 @@ async def lifespan(app: FastAPI):
     print("Crypto Trading Dashboard API 서버 가동")
     print("데이터베이스: market_data/crypto_dashboard.db")
     print("="*60 + "\n")
+    
+    symbols = ["BTCUSDT", "ETHUSDT"]
+    main_timeframes = ["15m", "30m", "1h", "4h"] 
+    
+    for sym in symbols:
+        for tf in main_timeframes:
+            feed = CryptoDataFeed(symbol=sym, timeframe=tf)
+            feed.sync_recent_data(required_limit=5000)
 
     loop = asyncio.get_running_loop()
     loop.run_in_executor(None, preload_initial_market_data)
