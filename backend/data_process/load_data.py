@@ -73,46 +73,61 @@ class CryptoDataFeed:
             
             # 2. ML 데이터셋 테이블 생성 (학습용 상세 데이터)
             cursor.execute('''
+                -- 1. AI 학습용 상세 데이터셋 테이블
                 CREATE TABLE IF NOT EXISTS ml_trading_dataset (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     signal_time TIMESTAMP,           
                     symbol TEXT,                     
                     timeframe TEXT,                  
                     signal_type TEXT,                
+                    
+                    -- X 데이터
                     entry_open REAL, entry_high REAL, entry_low REAL, entry_close REAL, entry_volume REAL,
-                    entry_tenkan REAL, entry_kijun REAL,
-                    entry_cloudTop REAL, entry_cloudBottom REAL,
-                    entry_rsi REAL, entry_macd REAL, entry_signal REAL, entry_mfi REAL,
-                    entry_sma224 REAL, entry_vwma224 REAL,
-                    bb_width REAL,                   
+                    entry_tenkan REAL, entry_kijun REAL, entry_cloudTop REAL, entry_cloudBottom REAL,
+                    entry_rsi REAL, entry_macdLine REAL, entry_signalLine REAL, entry_mfi REAL,
+                    entry_sma224 REAL, entry_vwma224 REAL, bb_width REAL,
+                    entry_equilibrium REAL, entry_smc_sl REAL,
+                    
+                    -- 시뮬레이션 설정
                     position_mode TEXT,              
                     leverage INTEGER,                
-                    tp_ratio REAL,                   
-                    sl_ratio REAL,                   
+                    margin_ratio REAL,   -- 0.33, 0.5 등             
+                    applied_sl_ratio REAL, -- 동적으로 계산된 손절 %
+                    sl_tag TEXT,           -- RULE_1_ROE or RULE_2_SMC
+                    
+                    -- Y 라벨
                     result_status TEXT,              
                     realized_pnl REAL,               
                     duration_candles INTEGER,        
                     pyramid_count INTEGER DEFAULT 0, 
                     mdd_rate REAL DEFAULT 0,         
-                    UNIQUE(signal_time, symbol, timeframe, position_mode, leverage, tp_ratio, sl_ratio) ON CONFLICT REPLACE
-                )
+                    
+                    -- UNIQUE 제약조건 수정
+                    UNIQUE(signal_time, symbol, timeframe, position_mode, leverage, margin_ratio) ON CONFLICT REPLACE
             ''')
 
             # 3. 전략 최적화 최종 통계 테이블 생성 (백테스트 결과 요약)
             cursor.execute('''
+                -- 2. 전략 랭킹용 요약 데이터 테이블
                 CREATE TABLE IF NOT EXISTS strategy_optimization (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     position_mode TEXT,
                     leverage INTEGER,
-                    tp_ratio REAL,
-                    sl_ratio REAL,
+                    margin_ratio REAL,
+                    
                     total_trades INTEGER,
+                    win_trades INTEGER,
+                    loss_trades INTEGER,
                     win_rate REAL,
-                    net_profit REAL,
+                    total_pnl REAL,
+                    avg_pnl REAL,
                     max_drawdown REAL,
+                    avg_duration REAL,
+                    avg_pyramid_count REAL,
                     tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    -- 아래 UNIQUE 제약조건이 있어야 업데이트(UPSERT)가 작동함
-                    UNIQUE(position_mode, leverage, tp_ratio, sl_ratio) ON CONFLICT REPLACE
+                    
+                    -- UNIQUE 제약조건 수정
+                    UNIQUE(position_mode, leverage, margin_ratio) ON CONFLICT REPLACE
                 )
             ''')
             
@@ -180,7 +195,9 @@ class CryptoDataFeed:
     # --- 머신러닝 및 시뮬레이션 결과 저장 메서드 (UPSERT 적용) ---
     def save_ml_result(self, ml_data: dict):
         """
-        신호 시간 및 설정을 기준으로 중복 데이터가 들어오면 업데이트합니다.
+        [AI 학습용 상세 데이터]
+        신호 시간, 심볼, 타임프레임, 모드, 레버리지, 진입비중을 기준으로 
+        중복 데이터가 들어오면 최신 결과(PNL, MDD 등)로 업데이트합니다.
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -189,15 +206,20 @@ class CryptoDataFeed:
                 placeholders = ", ".join(["?"] * len(keys))
                 cols_str = ", ".join([f'"{k}"' for k in keys])
                 
-                # 업데이트할 컬럼 (PK 및 UNIQUE 제약 조건 제외)
-                update_cols = [k for k in keys if k not in [
-                    'signal_time', 'symbol', 'timeframe', 'position_mode', 'leverage', 'tp_ratio', 'sl_ratio'
-                ]]
+                # [기획 반영] UNIQUE 제약 조건 키 리스트 (고정 파라미터들)
+                conflict_keys = [
+                    'signal_time', 'symbol', 'timeframe', 
+                    'position_mode', 'leverage', 'margin_ratio'
+                ]
+                
+                # 업데이트할 컬럼 (데이터 및 결과값들 - 제약 조건 키 제외)
+                update_cols = [k for k in keys if k not in conflict_keys]
                 update_str = ", ".join([f'"{k}"=excluded."{k}"' for k in update_cols])
                 
+                # ON CONFLICT 구문 수정
                 sql = f'''
                     INSERT INTO ml_trading_dataset ({cols_str}) VALUES ({placeholders})
-                    ON CONFLICT(signal_time, symbol, timeframe, position_mode, leverage, tp_ratio, sl_ratio) 
+                    ON CONFLICT({", ".join(conflict_keys)}) 
                     DO UPDATE SET {update_str}
                 '''
                 cursor.execute(sql, list(ml_data.values()))
@@ -207,7 +229,9 @@ class CryptoDataFeed:
 
     def save_opt_result(self, opt_data: dict):
         """
-        동일한 레버리지/TP/SL 설정의 최적화 결과가 들어오면 최신 성적으로 업데이트합니다.
+        [전략 랭킹용 요약 데이터]
+        동일한 모드/레버리지/진입비중 설정의 최적화 결과가 들어오면 
+        최신 성적(승률, 전체 PNL 등)으로 업데이트합니다.
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -216,14 +240,16 @@ class CryptoDataFeed:
                 placeholders = ", ".join(["?"] * len(keys))
                 cols_str = ", ".join([f'"{k}"' for k in keys])
                 
-                # 업데이트할 컬럼 (파라미터 조건 제외한 결과값들)
-                update_cols = [k for k in keys if k not in ['position_mode', 'leverage', 'tp_ratio', 'sl_ratio']]
+                # [기획 반영] 요약 테이블의 UNIQUE 제약 조건 키
+                conflict_keys = ['position_mode', 'leverage', 'margin_ratio']
+                
+                # 업데이트할 컬럼 (결과 지표들)
+                update_cols = [k for k in keys if k not in conflict_keys]
                 update_str = ", ".join([f'"{k}"=excluded."{k}"' for k in update_cols])
                 
-                # 참고: strategy_optimization 테이블 생성 시 해당 컬럼들에 UNIQUE 제약조건이 있어야 함
                 sql = f'''
                     INSERT INTO strategy_optimization ({cols_str}) VALUES ({placeholders})
-                    ON CONFLICT(position_mode, leverage, tp_ratio, sl_ratio) 
+                    ON CONFLICT({", ".join(conflict_keys)}) 
                     DO UPDATE SET {update_str}, tested_at=CURRENT_TIMESTAMP
                 '''
                 cursor.execute(sql, list(opt_data.values()))

@@ -8,8 +8,8 @@ from simulation.engine import SimulationEngine
 class StrategyOptimizer:
     def __init__(self, db_path):
         self.db_path = db_path
-        # 시장가 수수료 0.06%, 슬리피지 0.02% 반영 엔진 초기화
-        self.engine = SimulationEngine(fee_rate=Decimal('0.0006'), slippage_rate=Decimal('0.0002'))
+        # 시장가 수수료 0.05%, 슬리피지 0.02% 반영 엔진 초기화
+        self.engine = SimulationEngine(fee_rate=Decimal('0.0005'), slippage_rate=Decimal('0.0002'))
         self.logger = print 
 
     @staticmethod
@@ -112,33 +112,66 @@ class StrategyOptimizer:
                 final_pnl = wallet.total_balance - Decimal('10000')
                 mdd_rate = float((min_pnl / max_margin) * 100) if max_margin > 0 else 0.0
 
-                ml_data_batch.append((
-                    db_time, symbol, timeframe, signal_type, 
-                    float(row['open']), float(row['high']), float(row['low']), float(row['close']), float(row['volume']),
-                    float(row.get('tenkan', 0)), float(row.get('kijun', 0)), float(row.get('cloudTop', 0)), float(row.get('cloudBottom', 0)),
-                    float(row.get('rsi', 0)), float(row.get('macdLine', 0)), float(row.get('signalLine', 0)), float(row.get('mfi', 0)),
-                    float(row.get('sma224', 0)), float(row.get('vwma224', 0)),
-                    float(abs(final_sl - entry_price) / entry_price), # 실제 적용된 sl_ratio
-                    mode.value, lev, float(abs(eq_p - entry_price) / entry_price) if eq_p else 0.0, 
-                    result_status, float(final_pnl), duration, pyramid_count, mdd_rate
-                ))
+                # [ML 데이터 수집 - Dictionary 형태로 변경하여 관리 용이하게]
+                ml_data_batch.append({
+                    "signal_time": db_time, "symbol": symbol, "timeframe": timeframe, "signal_type": signal_type,
+                    "entry_open": float(row['open']), "entry_high": float(row['high']), "entry_low": float(row['low']),
+                    "entry_close": float(row['close']), "entry_volume": float(row['volume']),
+                    "entry_tenkan": float(row.get('tenkan', 0)), "entry_kijun": float(row.get('kijun', 0)),
+                    "entry_cloudTop": float(row.get('cloudTop', 0)), "entry_cloudBottom": float(row.get('cloudBottom', 0)),
+                    "entry_rsi": float(row.get('rsi', 0)), "entry_macdLine": float(row.get('macdLine', 0)),
+                    "entry_signalLine": float(row.get('signalLine', 0)), "entry_mfi": float(row.get('mfi', 0)),
+                    "entry_sma224": float(row.get('sma224', 0)), "entry_vwma224": float(row.get('vwma224', 0)),
+                    "entry_equilibrium": float(eq_p), "entry_smc_sl": float(smc_sl),
+                    "position_mode": mode.value, "leverage": lev, "margin_ratio": float(m_ratio),
+                    "applied_sl_ratio": float(abs(final_sl - entry_price) / entry_price), "sl_tag": sl_tag,
+                    "result_status": result_status, "realized_pnl": float(final_pnl),
+                    "duration_candles": duration, "pyramid_count": pyramid_count, "mdd_rate": mdd_rate
+                })
 
-        if ml_data_batch: self._save_to_db(ml_data_batch)
+        if ml_data_batch:
+            self._save_to_db(ml_data_batch)
 
-    def _save_to_db(self, records):
-        """시뮬레이션 결과를 DB에 UPSERT합니다."""
+    def _save_to_db(self, ml_records: list):
+        """상세 데이터(ML) 저장 후 통계 데이터(OPT)를 계산하여 저장합니다."""
         try:
+            df_all = pd.DataFrame(ml_records)
             with sqlite3.connect(self.db_path) as conn:
-                conn.executemany("""
-                    INSERT INTO ml_trading_dataset 
-                    (signal_time, symbol, timeframe, signal_type, entry_open, entry_high, entry_low, entry_close, entry_volume, 
-                    entry_tenkan, entry_kijun, entry_cloudTop, entry_cloudBottom, entry_rsi, entry_macd, entry_signal, entry_mfi,
-                    entry_sma224, entry_vwma224, sl_ratio, position_mode, leverage, tp_ratio, 
-                    result_status, realized_pnl, duration_candles, pyramid_count, mdd_rate)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(signal_time, symbol, timeframe, position_mode, leverage, tp_ratio, sl_ratio) 
-                    DO UPDATE SET result_status=excluded.result_status, realized_pnl=excluded.realized_pnl
-                """, records)
+                # 1. ml_trading_dataset 저장 (UPSERT)
+                keys = ml_records[0].keys()
+                cols_str = ", ".join([f'"{k}"' for k in keys])
+                placeholders = ", ".join(["?"] * len(keys))
+                conflict_keys = "signal_time, symbol, timeframe, position_mode, leverage, margin_ratio"
+                update_str = ", ".join([f'"{k}"=excluded."{k}"' for k in keys if k not in conflict_keys.replace(" ", "").split(",")])
+                
+                sql_ml = f"INSERT INTO ml_trading_dataset ({cols_str}) VALUES ({placeholders}) ON CONFLICT({conflict_keys}) DO UPDATE SET {update_str}"
+                conn.executemany(sql_ml, [tuple(r.values()) for r in ml_records])
+
+                # 2. strategy_optimization 요약 통계 계산 및 저장
+                # 특정 조합(모드, 레버리지, 비중)별로 그룹화하여 통계 산출
+                summary = df_all.groupby(['position_mode', 'leverage', 'margin_ratio']).agg(
+                    total_trades=('realized_pnl', 'count'),
+                    win_trades=('realized_pnl', lambda x: (x > 0).sum()),
+                    loss_trades=('realized_pnl', lambda x: (x <= 0).sum()),
+                    total_pnl=('realized_pnl', 'sum'),
+                    avg_pnl=('realized_pnl', 'mean'),
+                    max_drawdown=('mdd_rate', 'min'), # MDD는 음수값이므로 min이 가장 큰 낙폭
+                    avg_duration=('duration_candles', 'mean'),
+                    avg_pyramid_count=('pyramid_count', 'mean')
+                ).reset_index()
+                summary['win_rate'] = (summary['win_trades'] / summary['total_trades']) * 100
+                
+                opt_records = summary.to_dict('records')
+                opt_keys = opt_records[0].keys()
+                opt_cols_str = ", ".join([f'"{k}"' for k in opt_keys])
+                opt_placeholders = ", ".join(["?"] * len(opt_keys))
+                opt_conflict = "position_mode, leverage, margin_ratio"
+                opt_update = ", ".join([f'"{k}"=excluded."{k}"' for k in opt_keys if k not in opt_conflict.replace(" ", "").split(",")])
+
+                sql_opt = f"INSERT INTO strategy_optimization ({opt_cols_str}) VALUES ({opt_placeholders}) ON CONFLICT({opt_conflict}) DO UPDATE SET {opt_update}, tested_at=CURRENT_TIMESTAMP"
+                conn.executemany(sql_opt, [tuple(r.values()) for r in opt_records])
+                
                 conn.commit()
+            self.logger(f"[DB] 상세 기록 {len(ml_records)}건 및 요약 통계 {len(opt_records)}건 갱신 완료.")
         except Exception as e:
             self.logger(f"[DB] 저장 실패: {e}")

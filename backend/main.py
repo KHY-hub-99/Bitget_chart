@@ -26,21 +26,20 @@ db_folder = os.path.join(base_dir, "backend", "market_data")
 db_path = os.path.join(db_folder, "crypto_dashboard.db")
 
 sim_wallet = Wallet(initial_balance=Decimal('10000.0'))
-sim_engine = SimulationEngine()
-
-simulation_log_queue = asyncio.Queue()
+# 표준 수수료 및 슬리피지가 반영된 엔진 전역 인스턴스
+sim_engine = SimulationEngine(fee_rate=Decimal('0.0005'), slippage_rate=Decimal('0.0002'))
 
 class OrderRequest(BaseModel):
-    symbol: str = "BTC/USDT"
+    symbol: str = "BTCUSDT"
     side: PositionSide
     leverage: int
-    margin: Decimal
+    margin_ratio: float = 0.33  # [변경] 금액 대신 자산 대비 비중으로 요청
     current_price: Decimal
     take_profit: Optional[Decimal] = None
     stop_loss: Optional[Decimal] = None
 
 class TickRequest(BaseModel):
-    symbol: str = "BTC/USDT"
+    symbol: str = "BTCUSDT"
     current_price: Decimal
 
 class ModeRequest(BaseModel):
@@ -64,9 +63,10 @@ class ConnectionManager:
             except:
                 pass
 
+manager = ConnectionManager()
+
 # --- [2. 백그라운드 데이터 작업 로직] ---
 def preload_initial_market_data():
-    # 사용자가 요청한 심볼과 타임프레임 설정
     symbols = ["BTCUSDT", "ETHUSDT"]
     timeframes = ["15m", "1h", "4h", "1d", "1w"]
     
@@ -79,14 +79,8 @@ def preload_initial_market_data():
             try:
                 print(f"[STARTUP] {sym} ({tf}) 365일치 데이터 수집 중...")
                 feed = CryptoDataFeed(symbol=sym, timeframe=tf)
-                
-                # sync_historical_data를 사용하여 365일치를 강제로 백필합니다.
                 feed.sync_historical_data(start_days=365)
-                
-                # 지표 재계산 (RSI, 일목균형표 등)
                 feed.refresh_indicators()
-                
-                # API 부하 방지를 위해 짧은 휴식
                 time.sleep(1) 
             except Exception as e:
                 print(f"[STARTUP ERROR] {sym} ({tf}) 데이터 수집 실패: {e}")
@@ -143,15 +137,13 @@ def serialize_wallet(wallet: Wallet):
                 "liquidation_price": float(p.liquidation_price),
                 "unrealized_pnl": float(p.unrealized_pnl),
                 "take_profit": float(p.take_profit_price) if p.take_profit_price else None,
-                "stop_loss": float(p.stop_loss_price) if p.stop_loss_price else None
+                "stop_loss": float(p.stop_loss_price) if p.stop_loss_price else None,
+                "is_partial_closed": getattr(p, 'is_partial_closed', False) # 부분 익절 상태 반환
             }
             for sym, p in wallet.positions.items()
         }
     }
 
-# --- [시뮬레이션 백그라운드 실행 함수] ---
-# BUG FIX: 중복 except 블록 제거 → 단일 except로 통합, traceback 로깅 포함
-manager = ConnectionManager()
 def run_full_optimization_task(symbol: str, timeframe: str, loop: asyncio.AbstractEventLoop):
     def socket_logger(msg):
         loop.call_soon_threadsafe(
@@ -160,10 +152,8 @@ def run_full_optimization_task(symbol: str, timeframe: str, loop: asyncio.Abstra
 
     try:
         socket_logger(f"[{symbol} | {timeframe}] 전체 데이터 시뮬레이션 시작...")
-
         optimizer = StrategyOptimizer(db_path)
         optimizer.set_logger(socket_logger)
-
         feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
         df = feed.load_latest_from_db(limit=1000000)
 
@@ -180,6 +170,7 @@ def run_full_optimization_task(symbol: str, timeframe: str, loop: asyncio.Abstra
         socket_logger(f"시뮬레이션 중 오류 발생: {str(e)}")
         print(f"Detail Error: {error_msg}")
 
+# --- [3. 서버 연동 작업] ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("\n" + "="*60)
@@ -200,29 +191,27 @@ app = FastAPI(title="Crypto Trading Dashboard API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"], # 프론트엔드 통신 허용
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- [4. 시뮬레이션 API 엔드포인트] ---
+# --- [4. 수동 시뮬레이션 제어 API (Live 테스트용)] ---
 @app.get("/api/simulation/status")
 async def get_simulation_status():
     return serialize_wallet(sim_wallet)
 
 @app.post("/api/simulation/order")
 async def place_market_order(req: OrderRequest):
-    if req.margin > sim_wallet.available_balance:
-        raise HTTPException(status_code=400, detail="주문 가능 잔액이 부족합니다.")
-
+    # 엔진이 이제 margin_ratio를 요구하므로 맞춰서 전달
     sim_engine.open_position(
         wallet=sim_wallet,
         symbol=req.symbol,
         side=req.side,
         entry_price=req.current_price,
         leverage=req.leverage,
-        margin=req.margin,
+        margin_ratio=Decimal(str(req.margin_ratio)),
         take_profit=req.take_profit,
         stop_loss=req.stop_loss
     )
@@ -239,11 +228,16 @@ async def close_position(symbol: str = Query(...)):
 
 @app.post("/api/simulation/tick")
 async def process_price_tick(req: TickRequest):
+    # 수동 틱에서는 지표 데이터가 없으므로 현재가로 최소 구조체 생성
+    current_data = {
+        'close': req.current_price, 'high': req.current_price, 'low': req.current_price,
+        'TOP': 0, 'BOTTOM': 0, 'vwma224': 0, 'sma224': 0
+    }
     for pos_key, pos in list(sim_wallet.positions.items()):
         if pos.symbol == req.symbol:
             pos.update_pnl(Decimal(str(req.current_price)))
 
-    result = sim_engine.check_triggers(sim_wallet, req.symbol, req.current_price)
+    result = sim_engine.check_triggers(sim_wallet, current_data)
     sim_wallet.sync_balances()
 
     return {
@@ -326,14 +320,12 @@ async def get_history(
 async def websocket_endpoint(websocket: WebSocket, symbol: str, timeframe: str):
     await websocket.accept()
     feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
-    print(f"\n[WS 🟢] {symbol} ({timeframe}) 실시간 데이터 수집 및 DB 저장 스트림 시작\n")
+    print(f"\n[WS 🟢] {symbol} ({timeframe}) 실시간 데이터 스트림 시작\n")
 
     try:
         prev_price = 0
-
         while True:
             feed.update_data()
-
             latest_chart_df = feed.get_chart_df(limit=2)
 
             if not latest_chart_df.empty:
@@ -343,10 +335,8 @@ async def websocket_endpoint(websocket: WebSocket, symbol: str, timeframe: str):
 
                 last_candle = latest_chart_df.iloc[-1]
                 current_price = last_candle['close']
-                now_str = datetime.now().strftime("%H:%M:%S")
-
+                
                 if current_price != prev_price:
-                    print(f"[{now_str}] [DB 실시간 저장] {symbol} ({timeframe}) | 현재가: {current_price:,.2f} USDT")
                     prev_price = current_price
 
             await asyncio.sleep(5)
@@ -387,7 +377,7 @@ async def get_db_status(symbol: str = "BTCUSDT", timeframe: str = "15m"):
             }
     except Exception as e:
         return {"error": str(e), "message": "데이터베이스 조회 중 오류 발생"}
-
+    
 # --- [6. 분석 및 최적화 데이터 API] ---
 @app.get("/api/strategy-ranking")
 async def get_strategy_ranking(
@@ -412,10 +402,7 @@ async def get_strategy_ranking(
 
         query = f"""
         SELECT
-            position_mode,
-            leverage,
-            tp_ratio,
-            sl_ratio,
+            position_mode, leverage, tp_ratio, sl_ratio,
             COUNT(*) as total_trades,
             SUM(CASE WHEN result_status = 'TAKE_PROFIT' THEN 1 ELSE 0 END) as wins,
             SUM(CASE WHEN result_status = 'STOP_LOSS' THEN 1 ELSE 0 END) as losses,
@@ -437,42 +424,29 @@ async def get_strategy_ranking(
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(query, params)
-            rows = cursor.fetchall()
-            ranking_data = [dict(row) for row in rows]
+            ranking_data = [dict(row) for row in cursor.fetchall()]
 
-            return {
-                "status": "success",
-                "count": len(ranking_data),
-                "data": ranking_data
-            }
+            return {"status": "success", "count": len(ranking_data), "data": ranking_data}
 
     except Exception as e:
-        print(f"[API ERROR] 랭킹 조회 실패: {str(e)}")
         raise HTTPException(status_code=500, detail=f"데이터 분석 중 오류 발생: {str(e)}")
 
 @app.post("/api/sync-historical")
 async def sync_historical_data_trigger(
     background_tasks: BackgroundTasks,
-    symbol: str = Query("BTCUSDT"),
-    timeframe: str = Query("15m"),
-    days: int = Query(30)
+    symbol: str = Query("BTCUSDT"), timeframe: str = Query("15m"), days: int = Query(30)
 ):
-    try:
-        background_tasks.add_task(backfill_historical_data, symbol, timeframe, days)
-        return {
-            "status": "success",
-            "message": f"[{symbol}] {days}일치 데이터 백필 작업을 백그라운드에서 시작했습니다.",
-            "params": {"symbol": symbol, "timeframe": timeframe, "days": days}
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"동기화 요청 실패: {str(e)}")
-
+    background_tasks.add_task(backfill_historical_data, symbol, timeframe, days)
+    return {
+        "status": "success",
+        "message": f"[{symbol}] {days}일치 데이터 백필 작업을 시작했습니다."
+    }
+    
 # --- [7. 시뮬레이션 실행 및 로그 API] ---
 @app.post("/api/simulation/run-full")
 async def trigger_full_simulation(
     background_tasks: BackgroundTasks,
-    symbol: str = Query("BTCUSDT"),
-    timeframe: str = Query("15m")
+    symbol: str = Query("BTCUSDT"), timeframe: str = Query("15m")
 ):
     current_loop = asyncio.get_running_loop()
     background_tasks.add_task(run_full_optimization_task, symbol, timeframe, current_loop)
@@ -483,135 +457,92 @@ async def websocket_simulation_logs(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            # 클라이언트로부터의 메시지를 대기하며 연결 유지 (Ping-Pong 효과)
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-        print("[WS ⚪] 시뮬레이션 로그 소켓 연결 종료")
-
-# --- [8. 차트 시각화 전용 Replay API] ---
+        
+# --- [8. 차트 시각화 전용 Replay API (엔진 고도화 연동)] ---
 @app.get("/api/simulation/replay")
 async def get_simulation_replay(
     symbol: str = Query("BTCUSDT"),
     timeframe: str = Query("15m"),
-    mode: str = Query("HEDGE"),
+    mode: str = Query("ONE_WAY"),
     leverage: int = Query(10),
-    tp_ratio: float = Query(0.05),
-    sl_ratio: float = Query(0.05),
-    margin_ratio: float = Query(0.10, description="자산 대비 진입 비중 (0.1 = 10%)"),
-    limit: int = Query(1000)
+    margin_ratio: float = Query(0.33, description="자산 대비 진입 비중 (0.33 = 33%)")
 ):
     feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
-    df = feed.load_latest_from_db(limit=limit)
+    df = feed.load_latest_from_db(limit=1000)
 
     if df is None or df.empty:
         raise HTTPException(status_code=404, detail="시뮬레이션 데이터가 없습니다.")
 
-    chart_df = feed.get_chart_df(limit=limit)
-    chart_data = convert_df_to_chart_data(chart_df)
-
-    # 엔진 초기화 (수수료 및 슬리피지 설정)
-    engine = SimulationEngine(fee_rate=Decimal('0.0005'), slippage_rate=Decimal('0.0002'))
-    pos_mode = PositionMode.HEDGE if mode == "HEDGE" else PositionMode.ONE_WAY
+    chart_data = convert_df_to_chart_data(feed.get_chart_df(limit=1000))
+    
+    # 격리 모드 시뮬레이션용 독립 지갑 및 엔진 할당
+    engine = SimulationEngine()
+    pos_mode = PositionMode.ONE_WAY if mode == "ONE_WAY" else PositionMode.HEDGE
     temp_wallet = Wallet(initial_balance=Decimal('10000.0'), position_mode=pos_mode)
-
+    
     markers = []
-    # 공식: 입력받은 비중값을 Decimal로 변환
     m_ratio_dec = Decimal(str(margin_ratio))
+    TARGET_ROE, SL_MULTIPLIER = Decimal('0.15'), Decimal('1.1') # 하이브리드 손절 상수
 
     for row in df.itertuples():
         curr_p = Decimal(str(row.close))
-        # 공식: 캔들의 꼬리 가격(High, Low)을 추출하여 보수적 청산 체크에 활용
-        high_p = Decimal(str(row.high))
-        low_p = Decimal(str(row.low))
+        curr_data = {
+            'close': curr_p, 'high': Decimal(str(row.high)), 'low': Decimal(str(row.low)),
+            'TOP': getattr(row, 'TOP', 0), 'BOTTOM': getattr(row, 'BOTTOM', 0),
+            'vwma224': getattr(row, 'vwma224', 0), 'sma224': getattr(row, 'sma224', 0)
+        }
+        ts = int(row.Index.timestamp()) if hasattr(row, 'Index') and pd.notnull(row.Index) else 0
+        if not ts: continue
 
-        if hasattr(row, 'Index') and pd.notnull(row.Index):
-            ts = int(row.Index.timestamp())
-        else:
-            continue
-
-        m_long = getattr(row, 'master_long', False)
-        m_short = getattr(row, 'master_short', False)
-
-        # [1] 트리거 체크 (보수적 접근: 손절 우선 체크 로직이 반영된 engine 호출)
-        res_list = engine.check_triggers(
-            wallet=temp_wallet, 
-            symbol=symbol, 
-            current_price=curr_p, 
-            high_price=high_p, 
-            low_price=low_p
-        )
-        
+        # [1] 엔진 트리거 체크 (분할 익절, 다이아몬드, 분할 진입 등)
+        res_list = engine.check_triggers(wallet=temp_wallet, current_data=curr_data)
         if res_list:
             for res in res_list:
-                markers.append({
-                    "time": ts,
-                    "action": "SELL" if res.get('status') != 'LIQUIDATED' else "LIQUIDATED",
-                    "price": float(res.get('price', curr_p)),
-                    "reason": res.get('status', 'CLOSED')
-                })
+                status = res.get('status', 'CLOSED')
+                # 마커 시각화 (엔진의 액션을 차트에 표기)
+                if "LADDER_ENTRY" in status:
+                    markers.append({"time": ts, "action": "BUY" if "LONG" in status else "SELL", "price": float(res['price']), "reason": status})
+                elif "TP" in status or "LOSS" in status or "LIQUIDATED" in status:
+                    markers.append({"time": ts, "action": "SELL", "price": float(res['price']), "reason": status})
 
-        # [2] 단방향 모드 스위칭 체크
-        if pos_mode == PositionMode.ONE_WAY:
-            pos_key = symbol
-            if pos_key in temp_wallet.positions:
-                side = temp_wallet.positions[pos_key].side
-                opp_signal = (side == PositionSide.LONG and m_short) or (side == PositionSide.SHORT and m_long)
-                if opp_signal:
-                    engine._close_position(temp_wallet, pos_key, curr_p, "SWITCHED")
-                    markers.append({
-                        "time": ts, "action": "SELL", "price": float(curr_p), "reason": "SWITCHED"
-                    })
+        # [2] 메인 진입 시그널 감지 (longSig, shortSig)
+        m_long = getattr(row, 'longSig', 0) == 1
+        m_short = getattr(row, 'shortSig', 0) == 1
 
-        # [3] 진입 로직 (신규 또는 불타기)
         if m_long or m_short:
             side = PositionSide.LONG if m_long else PositionSide.SHORT
             action = "BUY" if side == PositionSide.LONG else "SELL"
 
-            # 공식: 실제 목표 변동률 = 목표 수익률(ROE) / 레버리지
-            price_change_ratio_tp = Decimal(str(tp_ratio)) / Decimal(str(leverage))
-            price_change_ratio_sl = Decimal(str(sl_ratio)) / Decimal(str(leverage))
+            # SMC 레벨 추출
+            smc_sl_val = getattr(row, 'swingLowLevel' if m_long else 'swingHighLevel', 0)
+            smc_sl = Decimal(str(smc_sl_val)) if not pd.isna(smc_sl_val) else Decimal('0')
+            eq_val = getattr(row, 'equilibrium', 0)
+            eq_p = Decimal(str(eq_val)) if not pd.isna(eq_val) else None
+            
+            # 하이브리드 손절 계산 (15% ROE * 1.1)
+            roe_sl_ratio = (TARGET_ROE / Decimal(str(leverage))) * SL_MULTIPLIER
+            roe_sl_dist = curr_p * roe_sl_ratio
+            roe_sl_price = (curr_p - roe_sl_dist) if m_long else (curr_p + roe_sl_dist)
 
-            if side == PositionSide.LONG:
-                tp_p = curr_p * (Decimal('1') + price_change_ratio_tp)
-                sl_p = curr_p * (Decimal('1') - price_change_ratio_sl)
+            is_rule2 = getattr(row, 'entry_smc_long' if m_long else 'entry_smc_short', 0) == 1
+            if is_rule2 and smc_sl > 0:
+                final_sl, sl_tag = smc_sl, "RULE_2_SMC"
             else:
-                tp_p = curr_p * (Decimal('1') - price_change_ratio_tp)
-                sl_p = curr_p * (Decimal('1') + price_change_ratio_sl)
+                final_sl, sl_tag = roe_sl_price, "RULE_1_ROE"
 
-            pos_key = engine._get_position_key(symbol, side, pos_mode)
-            is_pyramid = pos_key in temp_wallet.positions
+            # 엔진 진입 실행
+            entry_res = engine.open_position(
+                wallet=temp_wallet, symbol=symbol, side=side, entry_price=curr_p,
+                leverage=leverage, margin_ratio=m_ratio_dec,
+                sl_price=final_sl, equilibrium=eq_p, tag=sl_tag
+            )
+            
+            markers.append({"time": ts, "action": action, "price": float(curr_p), "reason": entry_res['status']})
 
-            # 공식: 계산된 증거금 = 현재 총 자산(Total Balance) * 진입 비중
-            calc_margin = temp_wallet.total_balance * m_ratio_dec
-            # 공식: 실제 투입 증거금 = min(계산된 금액, 현재 가용 잔고)
-            actual_margin = min(calc_margin, temp_wallet.available_balance)
-
-            # 최소 주문 금액(10 USDT) 이상일 때만 진입 허용
-            if actual_margin >= Decimal('10'):
-                engine.open_position(
-                    wallet=temp_wallet, 
-                    symbol=symbol, 
-                    side=side, 
-                    entry_price=curr_p, 
-                    leverage=leverage, 
-                    margin=actual_margin, 
-                    take_profit=tp_p, 
-                    stop_loss=sl_p
-                )
-
-                markers.append({
-                    "time": ts,
-                    "action": action,
-                    "price": float(curr_p),
-                    "reason": "PYRAMID" if is_pyramid else "ENTRY"
-                })
-
-    return {
-        "status": "success",
-        "data": chart_data,
-        "markers": markers
-    }
+    return {"status": "success", "data": chart_data, "markers": markers}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
