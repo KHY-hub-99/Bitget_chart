@@ -178,18 +178,11 @@ async def lifespan(app: FastAPI):
     print("Crypto Trading Dashboard API 서버 가동")
     print("데이터베이스: market_data/crypto_dashboard.db")
     print("="*60 + "\n")
-    
-    symbols = ["BTCUSDT", "ETHUSDT"]
-    main_timeframes = ["15m", "30m", "1h", "4h"] 
-    
-    for sym in symbols:
-        for tf in main_timeframes:
-            feed = CryptoDataFeed(symbol=sym, timeframe=tf)
-            feed.sync_recent_data(required_limit=5000)
 
     loop = asyncio.get_running_loop()
+    # 기존에 있던 백그라운드 초기 데이터 백필 로직은 유지
     loop.run_in_executor(None, preload_initial_market_data)
-
+    # 실시간 데이터 워커도 유지
     sync_task = asyncio.create_task(continuous_data_sync_worker())
 
     yield
@@ -289,8 +282,9 @@ async def get_history(
     days: int = Query(365)
 ):
     feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
+    feed.sync_recent_data(required_limit=5000)
+    
     fixed_limit = 5000
-
     feed.load_latest_from_db(limit=fixed_limit)
 
     tf_map = {
