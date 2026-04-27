@@ -68,7 +68,8 @@ manager = ConnectionManager()
 # --- [2. 백그라운드 데이터 작업 로직] ---
 def preload_initial_market_data():
     symbols = ["BTCUSDT", "ETHUSDT"]
-    timeframes = ["15m", "1h", "4h", "1d", "1w"]
+    # 기획 요청: 15m, 30m, 1h, 4h
+    timeframes = ["15m", "30m", "1h", "4h"]
     
     print("\n" + "="*60)
     print("[STARTUP] 지정된 5개 타임프레임의 365일 데이터 동기화 시작...")
@@ -89,7 +90,7 @@ def preload_initial_market_data():
 
 async def continuous_data_sync_worker():
     symbols = ["BTCUSDT", "ETHUSDT"]
-    timeframes = ["15m", "1h", "4h", "1d", "1w"]
+    timeframes = ["15m", "30m", "1h", "4h"]
 
     await asyncio.sleep(30)
     print("\n" + "="*50)
@@ -527,7 +528,9 @@ async def get_simulation_replay(
             roe_sl_dist = curr_p * roe_sl_ratio
             roe_sl_price = (curr_p - roe_sl_dist) if m_long else (curr_p + roe_sl_dist)
 
-            is_rule2 = getattr(row, 'entry_smc_long' if m_long else 'entry_smc_short', 0) == 1
+            # [수정] 표준 CamelCase 컬럼명 반영
+            is_rule2 = getattr(row, 'entrySmcLong' if m_long else 'entrySmcShort', 0) == 1
+            
             if is_rule2 and smc_sl > 0:
                 final_sl, sl_tag = smc_sl, "RULE_2_SMC"
             else:

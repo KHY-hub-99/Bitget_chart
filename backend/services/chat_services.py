@@ -32,14 +32,16 @@ def convert_df_to_chart_data(df: pd.DataFrame, max_points: int = 5000):
         # 2. Whale 세력선 (핵심 진입 지표)
         "sma224", "vwma224", "volConfirm",
         # 3. 기술적 보조지표
-        "rsi", "mfi", "macdLine", "signalLine", "bbUpper", "bbMid", "bbLower",
+        "rsi", "mfi", "macdLine", "signalLine", "bbLower", "bbMid", "bbUpper",
         # 4. SMC 가격 레벨 (시뮬레이션 SL 및 50% 익절 기준선)
         "swingHighLevel", "swingLowLevel", "equilibrium",
-        # 5. 매매 조건 및 확정 시그널
-        "longCondition", "shortCondition", "longSig", "shortSig",
-        # 6. 역추세 및 최종 마커
+        # 5. 역추세 세부 신호 및 최종 마커
         "bearishDiv", "bullishDiv", "extremeTop", "extremeBottom", "TOP", "BOTTOM",
-        # 7. SMC 구조 분석
+        # 6. [추가] 하이브리드 전략 세부 진입 규칙 (Rule 1 & Rule 2)
+        "entryVwmaLong", "entrySmcLong", "entryVwmaShort", "entrySmcShort",
+        # 7. 매매 조건 및 확정 시그널
+        "longCondition", "shortCondition", "longSig", "shortSig",
+        # 8. SMC 구조 분석 (기존 유지)
         "fvgBullish", "fvgBearish", "swingBOS", "swingCHOCH", "internalBOS", "internalCHOCH"
     ]
     
@@ -59,9 +61,13 @@ def convert_df_to_chart_data(df: pd.DataFrame, max_points: int = 5000):
         
         # A. 메인 매매 진입 신호 (화살표)
         if row.get('longSig') == 1:
-            markers.append({"time": t, "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "LONG"})
+            # SMC 진입인지 일반 VWMA 진입인지 텍스트로 구분해서 표시 가능 (기획적 응용)
+            label_text = "LONG(SMC)" if row.get('entrySmcLong') == 1 else "LONG"
+            markers.append({"time": t, "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": label_text})
+            
         elif row.get('shortSig') == 1:
-            markers.append({"time": t, "position": "aboveBar", "color": "#ef5350", "shape": "arrowDown", "text": "SHORT"})
+            label_text = "SHORT(SMC)" if row.get('entrySmcShort') == 1 else "SHORT"
+            markers.append({"time": t, "position": "aboveBar", "color": "#ef5350", "shape": "arrowDown", "text": label_text})
             
         # B. 익절 및 역추세 신호 (시뮬전략 기준: TOP=빨간다이아, BOTTOM=초록다이아)
         if row.get('TOP') == 1:
