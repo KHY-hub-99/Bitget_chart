@@ -27,27 +27,23 @@ class Position(BaseModel):
     take_profit_price: Optional[Decimal] = Field(default=None, description="목표 익절가")
     stop_loss_price: Optional[Decimal] = Field(default=None, description="목표 손절가")
     
-    # 수정 1 & 2: 엔진에서 수수료와 슬리피지 비율을 주입받고, 종료 시점의 불리한 가격을 반영
     def update_pnl(self, current_price: Decimal, fee_rate: Decimal = Decimal('0.0005'), slippage_rate: Decimal = Decimal('0.0002')):
-        self.mark_price = current_price
-        
-        # 1. 시장가 종료를 가정하여 슬리피지를 적용한 '예상 체결가' 계산
+        # 공식: 예상 종료가 = 현재가 * (1 - 슬리피지) [LONG 종료 기준]
         if self.side == PositionSide.LONG:
             estimated_exit_price = current_price * (Decimal('1') - slippage_rate)
         else:
             estimated_exit_price = current_price * (Decimal('1') + slippage_rate)
             
-        # 2. 예상 수수료 계산 (진입 노미널 + 종료 예상 노미널)
+        # 공식: 총 수수료 = (진입 노미널 가치 + 종료 노미널 가치) * 수수료율
         estimated_fee = (self.entry_price * self.size + estimated_exit_price * self.size) * fee_rate
         
-        # 3. 총수익(Gross) 계산
+        # 공식: 미실현 손익 = ((종료가 - 진입가) * 수량) - 총 수수료 [LONG 기준]
         if self.side == PositionSide.LONG:
             gross_pnl = (estimated_exit_price - self.entry_price) * self.size
         else:
             gross_pnl = (self.entry_price - estimated_exit_price) * self.size
             
-        # 4. 순수익(Net) 반영
-        self.unrealized_pnl = gross_pnl - estimated_fee 
+        self.unrealized_pnl = gross_pnl - estimated_fee
             
 class Wallet(BaseModel):
     """

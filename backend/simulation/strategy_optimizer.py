@@ -126,7 +126,7 @@ class StrategyOptimizer:
                         self.engine.open_position(wallet, symbol, side, curr_p, lev, Decimal('1000'), tp_p, sl_p)
                         pyramid_count += 1
 
-                    # 💡 [핵심 수정 3] 엔진의 check_triggers에 High/Low 가격 전달
+                    # 엔진의 check_triggers에 High/Low 가격 전달
                     res_list = self.engine.check_triggers(
                         wallet=wallet, 
                         symbol=symbol, 

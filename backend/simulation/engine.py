@@ -9,46 +9,50 @@ class SimulationEngine:
         self.slippage_rate = slippage_rate # 슬리피지 0.02%
 
     def calculate_liq_price(self, side: PositionSide, entry_price: Decimal, leverage: int) -> Decimal:
-        """격리 모드(Isolated) 강제 청산가 계산 공식"""
+        # 공식: 격리 롱 청산가 = 진입가 * (1 - (1 / 레버리지) + 유지마진율)
+        # 공식: 격리 숏 청산가 = 진입가 * (1 + (1 / 레버리지) - 유지마진율)
         lev = Decimal(str(leverage))
         if side == PositionSide.LONG:
             return entry_price * (Decimal('1') - (Decimal('1') / lev) + self.mmr)
         else:
             return entry_price * (Decimal('1') + (Decimal('1') / lev) - self.mmr)
-
+        
     def _get_position_key(self, symbol: str, side: PositionSide, mode: PositionMode) -> str:
         """모드에 따른 포지션 키 생성"""
         if mode == PositionMode.HEDGE:
             return f"{symbol}_{side.value}"
         return symbol
 
-    def open_position(self, wallet: Wallet, symbol: str, side: PositionSide, 
-                    entry_price: Decimal, leverage: int, margin: Decimal,
-                    take_profit: Optional[Decimal] = None, stop_loss: Optional[Decimal] = None):
+    def open_position(self, wallet: Wallet, symbol: str, side: PositionSide, entry_price: Decimal, leverage: int, margin: Decimal, take_profit: Optional[Decimal] = None, stop_loss: Optional[Decimal] = None):
         """포지션 진입 및 단방향 모드 스위칭 로직"""
         
-        # 1. 진입 시 슬리피지 반영
+        # 공식: 실제 진입가 = 시장가 * (1 + 슬리피지) [LONG 기준]
         if side == PositionSide.LONG:
             actual_entry_price = entry_price * (Decimal('1') + self.slippage_rate)
         else:
             actual_entry_price = entry_price * (Decimal('1') - self.slippage_rate)
 
+        # 공식: 포지션 수량 = (투입 증거금 * 레버리지) / 실제 진입가
         new_size = (margin * Decimal(str(leverage))) / actual_entry_price
         pos_key = self._get_position_key(symbol, side, wallet.position_mode)
 
         if pos_key in wallet.positions:
             existing_pos = wallet.positions[pos_key]
 
-            # [A] 같은 방향: 물타기
+            # [A] 물타기/불타기 시 평단가 및 TP/SL 업데이트
+            existing_pos = wallet.positions[pos_key]
             if existing_pos.side == side:
+                # 공식: 신규 평단가 = ((기존수량 * 기존평단) + (신규수량 * 신규평단)) / 총수량
                 total_size = existing_pos.size + new_size
                 new_entry = ((existing_pos.size * existing_pos.entry_price) + (new_size * actual_entry_price)) / total_size
                 
                 existing_pos.size = total_size
                 existing_pos.entry_price = new_entry
                 existing_pos.isolated_margin += margin
-                existing_pos.liquidation_price = self.calculate_liq_price(side, new_entry, leverage)
-                
+                # 불타기 시 목표가 갱신 (보수적 접근을 위해 필수)
+                if take_profit: existing_pos.take_profit_price = take_profit
+                if stop_loss: existing_pos.stop_loss_price = stop_loss
+
                 wallet.sync_balances()
                 return {"status": "MERGED", "realized_pnl": Decimal('0')}
 
@@ -113,28 +117,27 @@ class SimulationEngine:
         chk_low = low_price if low_price is not None else current_price
 
         for pos_key, pos in list(wallet.positions.items()):
-            if pos.symbol != symbol:
-                continue
-            
+            # 미실현 손익 업데이트
             pos.update_pnl(current_price, fee_rate=self.fee_rate, slippage_rate=self.slippage_rate)
 
-            # 익절/손절을 가장 먼저 체크합니다!
-            is_tp = pos.take_profit_price and (
-                (pos.side == PositionSide.LONG and chk_high >= pos.take_profit_price) or
-                (pos.side == PositionSide.SHORT and chk_low <= pos.take_profit_price)
-            )
+            # 보수적 접근: 손절(SL) 가능성부터 먼저 체크
             is_sl = pos.stop_loss_price and (
-                (pos.side == PositionSide.LONG and chk_low <= pos.stop_loss_price) or
-                (pos.side == PositionSide.SHORT and chk_high >= pos.stop_loss_price)
+                (pos.side == PositionSide.LONG and low_price <= pos.stop_loss_price) or
+                (pos.side == PositionSide.SHORT and high_price >= pos.stop_loss_price)
+            )
+            is_tp = pos.take_profit_price and (
+                (pos.side == PositionSide.LONG and high_price >= pos.take_profit_price) or
+                (pos.side == PositionSide.SHORT and low_price <= pos.take_profit_price)
             )
 
-            if is_tp or is_sl:
-                reason = "TAKE_PROFIT" if is_tp else "STOP_LOSS"
-                # 터치한 시점의 지정가로 체결
-                execution_price = pos.take_profit_price if is_tp else pos.stop_loss_price
-                res = self._close_position(wallet, pos_key, execution_price, reason)
+            if is_sl: # 손절이 우선순위를 가짐 (Pessimistic)
+                res = self._close_position(wallet, pos_key, pos.stop_loss_price, "STOP_LOSS")
                 trigger_results.append(res)
-                continue # 손절/익절 쳤으면 밑에 청산 로직은 무시
+                continue
+            elif is_tp: # 손절이 안 났을 때만 익절 체크
+                res = self._close_position(wallet, pos_key, pos.take_profit_price, "TAKE_PROFIT")
+                trigger_results.append(res)
+                continue
 
             # 손절이 안 나갔을 때만 최후의 수단으로 청산 체크!
             is_liquidated = (pos.side == PositionSide.LONG and chk_low <= pos.liquidation_price) or \
