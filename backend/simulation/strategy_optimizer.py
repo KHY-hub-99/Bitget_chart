@@ -109,6 +109,9 @@ class StrategyOptimizer:
                     
                     m_long = getattr(f_row, 'master_long', False)
                     m_short = getattr(f_row, 'master_short', False)
+
+                    m_top = getattr(f_row, 'top_detected', False)
+                    m_bottom = getattr(f_row, 'bottom_detected', False)
                     
                     pos_key = self.engine._get_position_key(symbol, side, mode)
                     
@@ -122,6 +125,21 @@ class StrategyOptimizer:
                         
                         if capped_unrealized_pnl < min_unrealized_pnl:
                             min_unrealized_pnl = capped_unrealized_pnl
+
+                    # Top / Bottom 반전 신호에 의한 강제 청산 로직
+                    if pos_key in wallet.positions:
+                        pos_obj = wallet.positions[pos_key]
+                        
+                        # 롱인데 고점(Top) 신호가 뜨거나, 숏인데 저점(Bottom) 신호가 뜨면 청산
+                        exit_signal = (pos_obj.side == PositionSide.LONG and m_top) or \
+                                    (pos_obj.side == PositionSide.SHORT and m_bottom)
+                                    
+                        if exit_signal:
+                            reason = "SIGNAL_TOP" if m_top else "SIGNAL_BOTTOM"
+                            res = self.engine._close_position(wallet, pos_key, curr_p, reason)
+                            result_status = reason
+                            final_pnl = Decimal(str(res.get('realized_pnl', 0)))
+                            break  # 포지션을 종료했으므로 이번 시뮬레이션 종료
 
                     # [단방향 스위칭 검사]
                     if mode == PositionMode.ONE_WAY:
