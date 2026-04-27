@@ -176,7 +176,6 @@ def run_full_optimization_task(symbol: str, timeframe: str, loop: asyncio.Abstra
 async def lifespan(app: FastAPI):
     print("\n" + "="*60)
     print("Crypto Trading Dashboard API 서버 가동")
-    print("데이터베이스: market_data/crypto_dashboard.db")
     print("="*60 + "\n")
 
     loop = asyncio.get_running_loop()
