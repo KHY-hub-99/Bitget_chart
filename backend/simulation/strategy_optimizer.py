@@ -116,8 +116,12 @@ class StrategyOptimizer:
                     if pos_key in wallet.positions:
                         pos_obj = wallet.positions[pos_key]
                         pos_obj.update_pnl(curr_p)
-                        if pos_obj.unrealized_pnl < min_unrealized_pnl:
-                            min_unrealized_pnl = pos_obj.unrealized_pnl
+                        
+                        # 미실현 손실은 투입된 증거금(-100%)을 넘을 수 없음
+                        capped_unrealized_pnl = max(pos_obj.unrealized_pnl, -pos_obj.isolated_margin)
+                        
+                        if capped_unrealized_pnl < min_unrealized_pnl:
+                            min_unrealized_pnl = capped_unrealized_pnl
 
                     # [단방향 스위칭 검사]
                     if mode == PositionMode.ONE_WAY:
