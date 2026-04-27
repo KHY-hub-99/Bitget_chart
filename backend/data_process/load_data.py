@@ -20,7 +20,7 @@ class CryptoDataFeed:
         self._init_db()
         
     def _init_db(self):
-        """테이블과 모든 지표 및 ML 데이터셋 컬럼을 생성합니다. (camelCase 표준 적용)"""
+        """테이블과 모든 지표 및 ML/전략 최적화 데이터셋 컬럼을 생성합니다. (표준 적용)"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -34,30 +34,31 @@ class CryptoDataFeed:
                 )
             """)
             
-            # pine_data.py에서 생성되는 모든 컬럼 리스트 정의
+            # pine_data.py에서 생성되는 모든 컬럼 리스트 정의 (변수명 통일 규칙 적용)
             indicator_columns = [
                 # 일목균형표 및 구름대
                 ('tenkan', 'REAL'), ('kijun', 'REAL'), 
                 ('senkouA', 'REAL'), ('senkouB', 'REAL'),
                 ('cloudTop', 'REAL'), ('cloudBottom', 'REAL'),
-                # Whale 세력선
-                ('sma224', 'REAL'), ('vwma224', 'REAL'),
+                # Whale 세력선 및 거래량
+                ('sma224', 'REAL'), ('vwma224', 'REAL'), ('volConfirm', 'INTEGER'),
                 # 기술적 지표
                 ('rsi', 'REAL'), ('mfi', 'REAL'),
                 ('macdLine', 'REAL'), ('signalLine', 'REAL'),
                 ('bbUpper', 'REAL'), ('bbMid', 'REAL'), ('bbLower', 'REAL'),
-                ('volConfirm', 'INTEGER'),
+                # [추가] SMC 가격 레벨 (시뮬레이션 SL 및 50% 익절 기준선)
+                ('swingHighLevel', 'REAL'), ('swingLowLevel', 'REAL'), ('equilibrium', 'REAL'),
                 # 매매 조건 및 확정 시그널
                 ('longCondition', 'INTEGER'), ('shortCondition', 'INTEGER'),
                 ('longSig', 'INTEGER'), ('shortSig', 'INTEGER'),
-                # SMC 구조 분석 지표
-                ('fvgBullish', 'INTEGER'), ('fvgBearish', 'INTEGER'),
-                ('swingBOS', 'INTEGER'), ('swingCHOCH', 'INTEGER'),
-                ('internalBOS', 'INTEGER'), ('internalCHOCH', 'INTEGER'),
                 # 역추세 세부 신호 및 최종 마커
                 ('bearishDiv', 'INTEGER'), ('bullishDiv', 'INTEGER'),
                 ('extremeTop', 'INTEGER'), ('extremeBottom', 'INTEGER'),
-                ('TOP', 'INTEGER'), ('BOTTOM', 'INTEGER')
+                ('TOP', 'INTEGER'), ('BOTTOM', 'INTEGER'),
+                # SMC 구조 분석 지표 (선택적 시각화용)
+                ('fvgBullish', 'INTEGER'), ('fvgBearish', 'INTEGER'),
+                ('swingBOS', 'INTEGER'), ('swingCHOCH', 'INTEGER'),
+                ('internalBOS', 'INTEGER'), ('internalCHOCH', 'INTEGER')
             ]
             
             cursor.execute(f'PRAGMA table_info("{self.symbol}")')
@@ -70,7 +71,7 @@ class CryptoDataFeed:
                     except Exception as e:
                         print(f"[DEBUG] 컬럼 추가 중 오류 ({col_name}): {e}")
             
-            # ML 데이터셋 테이블 생성
+            # 2. ML 데이터셋 테이블 생성 (학습용 상세 데이터)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ml_trading_dataset (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,10 +97,29 @@ class CryptoDataFeed:
                     UNIQUE(signal_time, symbol, timeframe, position_mode, leverage, tp_ratio, sl_ratio) ON CONFLICT REPLACE
                 )
             ''')
+
+            # 3. 전략 최적화 최종 통계 테이블 생성 (백테스트 결과 요약)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS strategy_optimization (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    position_mode TEXT,
+                    leverage INTEGER,
+                    tp_ratio REAL,
+                    sl_ratio REAL,
+                    total_trades INTEGER,
+                    win_rate REAL,
+                    net_profit REAL,
+                    max_drawdown REAL,
+                    tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    -- 아래 UNIQUE 제약조건이 있어야 업데이트(UPSERT)가 작동함
+                    UNIQUE(position_mode, leverage, tp_ratio, sl_ratio) ON CONFLICT REPLACE
+                )
+            ''')
+            
             conn.commit()
 
     def save_enriched_df(self, df_calc):
-        """지표가 계산된 데이터프레임을 DB에 저장합니다. (모든 camelCase 컬럼 반영)"""
+        """지표가 계산된 데이터프레임을 DB에 저장합니다. (모든 표준 컬럼 반영)"""
         if df_calc.empty: return
         try:
             temp_df = df_calc.reset_index().copy()
@@ -111,11 +131,11 @@ class CryptoDataFeed:
                 
             temp_df['timeframe'] = self.timeframe
             
-            # 정수형/불리언 컬럼 리스트 (pine_data와 매칭)
+            # 정수형/불리언 컬럼 리스트 (pine_data.py 기준)
             int_cols = [
                 'volConfirm', 'longCondition', 'shortCondition', 'longSig', 'shortSig',
-                'fvgBullish', 'fvgBearish', 'swingBOS', 'swingCHOCH', 'internalBOS', 'internalCHOCH',
-                'bearishDiv', 'bullishDiv', 'extremeTop', 'extremeBottom', 'TOP', 'BOTTOM'
+                'bearishDiv', 'bullishDiv', 'extremeTop', 'extremeBottom', 'TOP', 'BOTTOM',
+                'fvgBullish', 'fvgBearish', 'swingBOS', 'swingCHOCH', 'internalBOS', 'internalCHOCH'
             ]
             for col in int_cols:
                 if col in temp_df.columns:
@@ -123,15 +143,15 @@ class CryptoDataFeed:
             
             temp_df = temp_df.replace([np.inf, -np.inf], np.nan)
             
-            # 저장할 전체 컬럼 리스트 (pine_data 생성 순서 및 camelCase 반영)
+            # 저장할 전체 컬럼 리스트 (SMC Level 포함)
             db_cols = [
                 'time', 'timeframe', 'open', 'high', 'low', 'close', 'volume',
                 'tenkan', 'kijun', 'senkouA', 'senkouB', 'cloudTop', 'cloudBottom',
-                'sma224', 'vwma224', 'rsi', 'mfi', 'macdLine', 'signalLine',
-                'bbUpper', 'bbMid', 'bbLower', 'volConfirm',
+                'sma224', 'vwma224', 'volConfirm', 'rsi', 'mfi', 'macdLine', 'signalLine',
+                'bbUpper', 'bbMid', 'bbLower', 'swingHighLevel', 'swingLowLevel', 'equilibrium',
                 'longCondition', 'shortCondition', 'longSig', 'shortSig',
-                'fvgBullish', 'fvgBearish', 'swingBOS', 'swingCHOCH', 'internalBOS', 'internalCHOCH',
-                'bearishDiv', 'bullishDiv', 'extremeTop', 'extremeBottom', 'TOP', 'BOTTOM'
+                'bearishDiv', 'bullishDiv', 'extremeTop', 'extremeBottom', 'TOP', 'BOTTOM',
+                'fvgBullish', 'fvgBearish', 'swingBOS', 'swingCHOCH', 'internalBOS', 'internalCHOCH'
             ]
             
             for col in db_cols:
@@ -157,7 +177,61 @@ class CryptoDataFeed:
         except Exception as e:
             print(f"DB 저장 에러: {e}")
 
-    # --- 기존의 보조 메서드들 (동일하게 유지) ---
+    # --- 머신러닝 및 시뮬레이션 결과 저장 메서드 (UPSERT 적용) ---
+    def save_ml_result(self, ml_data: dict):
+        """
+        신호 시간 및 설정을 기준으로 중복 데이터가 들어오면 업데이트합니다.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                keys = list(ml_data.keys())
+                placeholders = ", ".join(["?"] * len(keys))
+                cols_str = ", ".join([f'"{k}"' for k in keys])
+                
+                # 업데이트할 컬럼 (PK 및 UNIQUE 제약 조건 제외)
+                update_cols = [k for k in keys if k not in [
+                    'signal_time', 'symbol', 'timeframe', 'position_mode', 'leverage', 'tp_ratio', 'sl_ratio'
+                ]]
+                update_str = ", ".join([f'"{k}"=excluded."{k}"' for k in update_cols])
+                
+                sql = f'''
+                    INSERT INTO ml_trading_dataset ({cols_str}) VALUES ({placeholders})
+                    ON CONFLICT(signal_time, symbol, timeframe, position_mode, leverage, tp_ratio, sl_ratio) 
+                    DO UPDATE SET {update_str}
+                '''
+                cursor.execute(sql, list(ml_data.values()))
+                conn.commit()
+        except Exception as e:
+            print(f"ML 데이터 저장/업데이트 에러: {e}")
+
+    def save_opt_result(self, opt_data: dict):
+        """
+        동일한 레버리지/TP/SL 설정의 최적화 결과가 들어오면 최신 성적으로 업데이트합니다.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                keys = list(opt_data.keys())
+                placeholders = ", ".join(["?"] * len(keys))
+                cols_str = ", ".join([f'"{k}"' for k in keys])
+                
+                # 업데이트할 컬럼 (파라미터 조건 제외한 결과값들)
+                update_cols = [k for k in keys if k not in ['position_mode', 'leverage', 'tp_ratio', 'sl_ratio']]
+                update_str = ", ".join([f'"{k}"=excluded."{k}"' for k in update_cols])
+                
+                # 참고: strategy_optimization 테이블 생성 시 해당 컬럼들에 UNIQUE 제약조건이 있어야 함
+                sql = f'''
+                    INSERT INTO strategy_optimization ({cols_str}) VALUES ({placeholders})
+                    ON CONFLICT(position_mode, leverage, tp_ratio, sl_ratio) 
+                    DO UPDATE SET {update_str}, tested_at=CURRENT_TIMESTAMP
+                '''
+                cursor.execute(sql, list(opt_data.values()))
+                conn.commit()
+        except Exception as e:
+            print(f"최적화 결과 저장/업데이트 에러: {e}")
+
+    # --- 기존의 보조 메서드들 ---
     def _fetch_binance_klines(self, start_time=None, end_time=None, limit=1500):
         endpoint = "/fapi/v1/klines"
         params = {"symbol": self.symbol, "interval": self.timeframe, "limit": limit}
@@ -192,7 +266,7 @@ class CryptoDataFeed:
         with sqlite3.connect(self.db_path) as conn:
             query = f'SELECT * FROM "{self.symbol}" WHERE timeframe = "{self.timeframe}" ORDER BY time ASC'
             full_df = pd.read_sql(query, conn)
-        if full_df.empty or len(full_df) < 60: return
+        if full_df.empty or len(full_df) < 224: return  # Whale 지표(224) 계산을 위한 최소치 수정
         full_df['time'] = pd.to_datetime(full_df['time'], unit='ms')
         full_df.set_index('time', inplace=True)
         self.df = apply_master_strategy(full_df)
@@ -201,8 +275,9 @@ class CryptoDataFeed:
     def update_data(self):
         klines = self._fetch_binance_klines(limit=20)
         self._save_raw_ohlcv(klines)
-        self.load_latest_from_db(limit=300)
-        if len(self.df) > 60:
+        # Whale 지표(sma224/vwma224) 계산을 위해 최소 224개 이상의 캔들 필요. 여유있게 300~500개 권장
+        self.load_latest_from_db(limit=500) 
+        if len(self.df) >= 224: 
             self.df = apply_master_strategy(self.df)
             self.save_enriched_df(self.df)
         return self.df

@@ -2,151 +2,103 @@ import pandas as pd
 import pandas_ta as ta
 import numpy as np
 
-# SMC 상태 관리를 위한 클래스 (camelCase 적용)
+# SMC 상태 관리를 위한 클래스
 class Pivot:
     def __init__(self):
         self.currentLevel = np.nan
         self.crossed = False
-        self.barTime = None
 
 def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     """
-    OHLCV 데이터프레임을 받아 마스터 전략 및 SMC 지표를 계산합니다.
-    필수 컬럼: 'open', 'high', 'low', 'close', 'volume'
+    OHLCV 데이터프레임을 받아 README.md 표준 변수명에 맞춰 전략 지표를 계산합니다.
     """
-    # 데이터 복사 및 초기화
     df = df.copy()
     
-    # --- [1. 파라미터 설정] ---
-    # 마스터 전략 파라미터
+    # --- [1. 파라미터 (Parameters)] ---
     tenkanLen, kijunLen, senkouBLen = 9, 26, 52
     displacement = 26
     rsiLen, mfiLen = 14, 14
     bbLen, bbMult = 20, 2.2
     volMult, whaleLen = 1.5, 224
-    
-    # SMC 파라미터 (지식 파일 기준)
     swingLen = 50 
-    internalLen = 5
 
-    # --- [2. 벡터 지표 계산 (기존 마스터 전략)] ---
-    # 일목균형표
-    tenkan = (df['high'].rolling(window=tenkanLen).max() + df['low'].rolling(window=tenkanLen).min()) / 2
-    kijun = (df['high'].rolling(window=kijunLen).max() + df['low'].rolling(window=kijunLen).min()) / 2
-    df['tenkan'], df['kijun'] = tenkan, kijun
-    df['senkouA'] = (tenkan + kijun) / 2
+    # --- [2. 보조지표 (Indicators)] ---
+    
+    # 일목균형표 (Ichimoku)
+    df['tenkan'] = (df['high'].rolling(window=tenkanLen).max() + df['low'].rolling(window=tenkanLen).min()) / 2
+    df['kijun'] = (df['high'].rolling(window=kijunLen).max() + df['low'].rolling(window=kijunLen).min()) / 2
+    df['senkouA'] = (df['tenkan'] + df['kijun']) / 2
     df['senkouB'] = (df['high'].rolling(window=senkouBLen).max() + df['low'].rolling(window=senkouBLen).min()) / 2
     
-    # 구름대 상하단 (displacement 반영)
+    # 구름대 상하단
     df['cloudTop'] = np.maximum(df['senkouA'].shift(displacement-1), df['senkouB'].shift(displacement-1))
     df['cloudBottom'] = np.minimum(df['senkouA'].shift(displacement-1), df['senkouB'].shift(displacement-1))
 
-    # Whale 및 기타 보조지표
+    # Whale(세력) 및 거래량
     df['sma224'] = ta.sma(df['close'], length=whaleLen)
     df['vwma224'] = ta.vwma(df['close'], df['volume'], length=whaleLen)
+    df['volConfirm'] = df['volume'] > (ta.sma(df['volume'], length=20) * volMult)
     
+    # RSI & MFI
+    df['rsi'] = ta.rsi(df['close'], length=rsiLen)
+    df['mfi'] = ta.mfi(df['high'], df['low'], df['close'], df['volume'], length=mfiLen)
+    
+    # MACD
     macd = ta.macd(df['close'], fast=12, slow=26, signal=9)
     df['macdLine'] = macd['MACD_12_26_9']
     df['signalLine'] = macd['MACDs_12_26_9']
     
-    df['rsi'] = ta.rsi(df['close'], length=rsiLen)
-    df['mfi'] = ta.mfi(df['high'], df['low'], df['close'], df['volume'], length=mfiLen)
-    
+    # 볼린저 밴드
     bb = ta.bbands(df['close'], length=bbLen, std=bbMult)
     df['bbLower'] = bb[f'BBL_{bbLen}_{bbMult}']
     df['bbMid'] = bb[f'BBM_{bbLen}_{bbMult}']
     df['bbUpper'] = bb[f'BBU_{bbLen}_{bbMult}']
-    
-    df['volConfirm'] = df['volume'] > (ta.sma(df['volume'], length=20) * volMult)
 
-    # --- [3. 상태 저장형 로직 (SMC 및 시그널)] ---
-    # SMC 상태 변수 초기화
+    # --- [3. SMC 구조 및 상태 계산 (내부 로직)] ---
     swingHigh, swingLow = Pivot(), Pivot()
-    internalHigh, internalLow = Pivot(), Pivot()
-    swingTrend, swingLeg = 0, 0 # 1: Bullish, -1: Bearish
-    internalTrend, internalLeg = 0, 0
-    
-    # 결과를 담을 리스트 초기화
-    longSig_list, shortSig_list = [], []
-    swingBOS_list, swingCHOCH_list = [False] * len(df), [False] * len(df)
-    internalBOS_list, internalCHOCH_list = [False] * len(df), [False] * len(df)
-    fvgBullish_list, fvgBearish_list = [False] * len(df), [False] * len(df)
-    
-    isLongPos, isShortPos = False, False
+    swingHighLevel, swingLowLevel = [np.nan] * len(df), [np.nan] * len(df)
+    swingTrend, swingLeg = 0, 0
 
-    # SMC 구조 분석 함수 (Closure)
-    def check_structure(idx, size, p_high, p_low, p_trend, p_leg, bos_list, choch_list):
+    def check_structure(idx, size, p_high, p_low, p_trend, p_leg):
         if idx < 2 * size: return p_trend, p_leg
+        
+        # 피벗 판별
+        is_p_high = df['high'].iloc[idx-size] == df['high'].iloc[idx-2*size : idx+1].max()
+        is_p_low = df['low'].iloc[idx-size] == df['low'].iloc[idx-2*size : idx+1].min()
 
-        # leg 판별 (high[size]가 이전/이후 size개 봉 중 최고가인지 확인)
-        newLegHigh = df['high'].iloc[idx-size] > df['high'].iloc[idx-size*2 : idx-size].max() and \
-                    df['high'].iloc[idx-size] > df['high'].iloc[idx-size+1 : idx+1].max()
-        newLegLow = df['low'].iloc[idx-size] < df['low'].iloc[idx-size*2 : idx-size].min() and \
-                    df['low'].iloc[idx-size] < df['low'].iloc[idx-size+1 : idx+1].min()
-
-        if newLegHigh:
-            if p_leg == 1: # Leg 변경 (Bull -> Bear): 새로운 High 확정
+        if is_p_high:
+            if p_leg == 1:
                 p_high.currentLevel = df['high'].iloc[idx-size]
                 p_high.crossed = False
             p_leg = 0
-        elif newLegLow:
-            if p_leg == 0: # Leg 변경 (Bear -> Bull): 새로운 Low 확정
+        elif is_p_low:
+            if p_leg == 0:
                 p_low.currentLevel = df['low'].iloc[idx-size]
                 p_low.crossed = False
             p_leg = 1
 
-        # BOS / CHoCH 판별
         close_val = df['close'].iloc[idx]
-        if close_val > p_high.currentLevel and not p_high.crossed:
-            if p_trend == -1: choch_list[idx] = True
-            else: bos_list[idx] = True
+        if not np.isnan(p_high.currentLevel) and close_val > p_high.currentLevel:
             p_high.crossed = True
             p_trend = 1
-        elif close_val < p_low.currentLevel and not p_low.crossed:
-            if p_trend == 1: choch_list[idx] = True
-            else: bos_list[idx] = True
+        elif not np.isnan(p_low.currentLevel) and close_val < p_low.currentLevel:
             p_low.crossed = True
             p_trend = -1
         
         return p_trend, p_leg
 
-    # 데이터프레임 순회 (Pine Script 방식 시뮬레이션)
     for i in range(len(df)):
-        # A. 기본 진입 조건 (Master Strategy)
-        longCond = (df['close'].iloc[i] > df['cloudTop'].iloc[i]) and \
-                (i > 0 and df['close'].iloc[i-1] <= df['cloudTop'].iloc[i-1]) and \
-                (df['macdLine'].iloc[i] > df['signalLine'].iloc[i]) and \
-                df['volConfirm'].iloc[i]
-        
-        shortCond = (df['close'].iloc[i] < df['cloudBottom'].iloc[i]) and \
-                    (i > 0 and df['close'].iloc[i-1] >= df['cloudBottom'].iloc[i-1]) and \
-                    (df['macdLine'].iloc[i] < df['signalLine'].iloc[i]) and \
-                    df['volConfirm'].iloc[i]
+        swingTrend, swingLeg = check_structure(i, swingLen, swingHigh, swingLow, swingTrend, swingLeg)
+        swingHighLevel[i] = swingHigh.currentLevel
+        swingLowLevel[i] = swingLow.currentLevel
 
-        if longCond: isLongPos, isShortPos = True, False
-        elif shortCond: isShortPos, isLongPos = True, False
-        
-        longSig_list.append(longCond and isLongPos)
-        shortSig_list.append(shortCond and isShortPos)
+    df['swingHighLevel'] = swingHighLevel
+    df['swingLowLevel'] = swingLowLevel
+    df['equilibrium'] = (df['swingHighLevel'] + df['swingLowLevel']) / 2
 
-        # B. SMC: FVG (Fair Value Gap) 감지
-        if i >= 2:
-            if df['low'].iloc[i] > df['high'].iloc[i-2]:
-                fvgBullish_list[i-1] = True
-            elif df['high'].iloc[i] < df['low'].iloc[i-2]:
-                fvgBearish_list[i-1] = True
-
-        # C. SMC: 구조 분석 (Swing & Internal)
-        swingTrend, swingLeg = check_structure(i, swingLen, swingHigh, swingLow, swingTrend, swingLeg, swingBOS_list, swingCHOCH_list)
-        internalTrend, internalLeg = check_structure(i, internalLen, internalHigh, internalLow, internalTrend, internalLeg, internalBOS_list, internalCHOCH_list)
-
-    # 결과 반영
-    df['longSig'], df['shortSig'] = longSig_list, shortSig_list
-    df['fvgBullish'], df['fvgBearish'] = fvgBullish_list, fvgBearish_list
-    df['swingBOS'], df['swingCHOCH'] = swingBOS_list, swingCHOCH_list
-    df['internalBOS'], df['internalCHOCH'] = internalBOS_list, internalCHOCH_list
-
-    # --- [4. 역추세 및 최종 마커] ---
+    # --- [4. 매매 신호 (Signals)] ---
+    
+    # 역추세 세부 신호 (Divergence & Extreme)
     high_5_prev = df['high'].rolling(5).max().shift(1)
     low_5_prev = df['low'].rolling(5).min().shift(1)
     rsi_5_max_prev = df['rsi'].rolling(5).max().shift(1)
@@ -157,7 +109,25 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     df['extremeTop'] = (df['high'] >= df['bbUpper']) & (df['rsi'] > 75) & (df['mfi'] > 80)
     df['extremeBottom'] = (df['low'] <= df['bbLower']) & (df['rsi'] < 25) & (df['mfi'] < 20)
 
+    # 최종 역추세 신호 (TOP / BOTTOM)
     df['TOP'] = df['bearishDiv'] | df['extremeTop']
     df['BOTTOM'] = df['bullishDiv'] | df['extremeBottom']
+    
+    # 진입 조건 (Condition) - 룰 1(이평선 터치) 및 룰 2(SMC 박스권) 결합
+    is_above = (df['low'] > df['vwma224']).rolling(window=4).all()
+    is_below = (df['high'] < df['vwma224']).rolling(window=4).all()
+    
+    rule1_long = is_above.shift(1) & (df['low'] <= df['vwma224'])
+    rule2_long = (df['low'] <= df['swingLowLevel'] * 1.005) & (df['low'] >= df['swingLowLevel'])
+    
+    rule1_short = is_below.shift(1) & (df['high'] >= df['vwma224'])
+    rule2_short = (df['high'] >= df['swingHighLevel'] * 0.995) & (df['high'] <= df['swingHighLevel'])
+
+    df['longCondition'] = rule1_long | rule2_long
+    df['shortCondition'] = rule1_short | rule2_short
+
+    # 최종 매매 신호 (Sig) - 조건 충족 시 첫 캔들에서만 발생
+    df['longSig'] = df['longCondition'] & ~df['longCondition'].shift(1).fillna(False)
+    df['shortSig'] = df['shortCondition'] & ~df['shortCondition'].shift(1).fillna(False)
 
     return df
