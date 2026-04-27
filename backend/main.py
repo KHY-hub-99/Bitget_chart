@@ -80,7 +80,7 @@ def preload_initial_market_data():
             try:
                 print(f"[STARTUP] {sym} ({tf}) 365일치 데이터 수집 중...")
                 feed = CryptoDataFeed(symbol=sym, timeframe=tf)
-                feed.sync_historical_data(start_days=365)
+                feed.sync_historical_data(start_days=730)
                 feed.refresh_indicators()
                 time.sleep(1) 
             except Exception as e:
