@@ -72,13 +72,13 @@ def preload_initial_market_data():
     timeframes = ["15m", "30m", "1h", "4h"]
     
     print("\n" + "="*60)
-    print(f"[STARTUP] 지정된 {len(timeframes)}개 타임프레임의 365일 데이터 동기화 시작...")
+    print(f"[STARTUP] 지정된 {len(timeframes)}개 타임프레임의 데이터 동기화 시작...")
     print("="*60)
 
     for sym in symbols:
         for tf in timeframes:
             try:
-                print(f"[STARTUP] {sym} ({tf}) 365일치 데이터 수집 중...")
+                print(f"[STARTUP] {sym} ({tf}) 데이터 수집 중...")
                 feed = CryptoDataFeed(symbol=sym, timeframe=tf)
                 feed.sync_historical_data(start_days=730)
                 feed.refresh_indicators()
