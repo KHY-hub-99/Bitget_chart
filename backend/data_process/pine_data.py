@@ -1,5 +1,3 @@
-import os
-import sys
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
@@ -7,79 +5,69 @@ import numpy as np
 def apply_master_strategy(
     df,
     tenkan_len=9, kijun_len=26, senkou_b_len=52, displacement=26,
-    rsi_len=14, mfi_len=14, bb_len=20, bb_mult=2.2, vol_mult=1.5
+    rsi_len=14, mfi_len=14, bb_len=20, bb_mult=2.2, vol_mult=1.5,
+    whale_len=224, swing_len=50, fvg_threshold=0.0
 ):
-    """
-    BTC 마스터 최종 통합 전략 (변수명 표준화 적용)
-    """
-    if df.empty:
-        print("[DEBUG] 데이터가 비어 있어 전략을 계산할 수 없습니다.")
-        return df
+    if df.empty: return df
     df = df.copy()
 
-    # === [1. 일목균형표 계산] ===
-    tenkan = (df['high'].rolling(tenkan_len).max() + df['low'].rolling(tenkan_len).min()) / 2
-    kijun = (df['high'].rolling(kijun_len).max() + df['low'].rolling(kijun_len).min()) / 2
-    df['kijun'] = kijun
+    # [1] 지표 계산 (일목, Whale, MACD, RSI, BB)
+    df['tenkan'] = (df['high'].rolling(tenkan_len).max() + df['low'].rolling(tenkan_len).min()) / 2
+    df['kijun'] = (df['high'].rolling(kijun_len).max() + df['low'].rolling(kijun_len).min()) / 2
+    df['senkou_a'] = ((df['tenkan'] + df['kijun']) / 2).shift(displacement - 1)
+    df['senkou_b'] = ((df['high'].rolling(senkou_b_len).max() + df['low'].rolling(senkou_b_len).min()) / 2).shift(displacement - 1)
+    
+    df['cloud_top'] = np.maximum(df['senkou_a'], df['senkou_b']) 
+    df['cloud_bottom'] = np.minimum(df['senkou_a'], df['senkou_b'])
 
-    senkou_a = (tenkan + kijun) / 2
-    senkou_b = (df['high'].rolling(senkou_b_len).max() + df['low'].rolling(senkou_b_len).min()) / 2
+    df['sma_224'] = ta.sma(df['close'], length=whale_len)
+    df['vwma_224'] = ta.vwma(df['close'], df['volume'], length=whale_len)
 
-    df['senkou_a'] = senkou_a
-    df['senkou_b'] = senkou_b
-
-    shift_val = displacement - 1
-    senkou_a_calc = senkou_a.shift(shift_val)
-    senkou_b_calc = senkou_b.shift(shift_val)
-
-    cloud_top_calc = np.maximum(senkou_a_calc, senkou_b_calc)
-    cloud_bottom_calc = np.minimum(senkou_a_calc, senkou_b_calc)
-
-    # === [2. 보조지표 계산] ===
     macd = df.ta.macd(fast=12, slow=26, signal=9)
-    df['macd_line'] = macd.iloc[:, 0]
-    df['macd_sig'] = macd.iloc[:, 2]
+    df['macd_line'], df['macd_sig'] = macd.iloc[:, 0], macd.iloc[:, 2]
 
     df['rsi'] = df.ta.rsi(length=rsi_len)
     df['mfi'] = df.ta.mfi(length=mfi_len)
 
     bb = df.ta.bbands(length=bb_len, std=bb_mult)
-    df['bb_lower'] = bb.iloc[:, 0]
-    df['bb_middle'] = bb.iloc[:, 1]
-    df['bb_upper'] = bb.iloc[:, 2]
+    df['bb_lower'], df['bb_middle'], df['bb_upper'] = bb.iloc[:, 0], bb.iloc[:, 1], bb.iloc[:, 2]
+    df['vol_confirm'] = df['volume'] > (df['volume'].rolling(20).mean() * vol_mult)
 
-    vol_sma = df['volume'].rolling(20).mean()
-    vol_confirm = df['volume'] > (vol_sma * vol_mult)
+    # [2] SMC (FVG & Swing)
+    df['fvg_bullish'] = (df['low'] > df['high'].shift(2)) & (df['close'].shift(1) > df['high'].shift(2))
+    df['fvg_bearish'] = (df['high'] < df['low'].shift(2)) & (df['close'].shift(1) < df['low'].shift(2))
+    df['swing_high'] = df['high'] == df['high'].rolling(window=swing_len*2+1, center=True).max()
+    df['swing_low'] = df['low'] == df['low'].rolling(window=swing_len*2+1, center=True).min()
 
-    # === [3. 신호 로직] ===
-    high_prev_5_max = df['high'].shift(1).rolling(5).max()
-    low_prev_5_min = df['low'].shift(1).rolling(5).min()
-    rsi_prev_5_max = df['rsi'].shift(1).rolling(5).max()
-    rsi_prev_5_min = df['rsi'].shift(1).rolling(5).min()
+    # [3] 신호 로직 (중복 방지 State 반영)
+    long_cond = (df['close'] > df['cloud_top']) & (df['macd_line'] > df['macd_sig']) & df['vol_confirm']
+    short_cond = (df['close'] < df['cloud_bottom']) & (df['macd_line'] < df['macd_sig']) & df['vol_confirm']
 
-    bearish_div = (df['high'] > high_prev_5_max) & (df['rsi'] < rsi_prev_5_max) & (df['rsi'] > 65)
-    bullish_div = (df['low'] < low_prev_5_min) & (df['rsi'] > rsi_prev_5_min) & (df['rsi'] < 35)
+    df['pos_state'] = np.nan
+    df.loc[long_cond, 'pos_state'] = 1
+    df.loc[short_cond, 'pos_state'] = -1
+    df['pos_state'] = df['pos_state'].ffill().fillna(0)
+    
+    df['is_long_pos'] = df['pos_state'] == 1
+    df['is_short_pos'] = df['pos_state'] == -1
 
-    # BUG FIX: 중복 조건 제거
-    # 기존: (df['mfi'] > 75) & (df['mfi'] > 80) → > 75는 > 80에 포함됨 (dead condition)
-    # 기존: (df['mfi'] < 25) & (df['mfi'] < 20) → < 25는 < 20에 포함됨 (dead condition)
-    extreme_top = (df['high'] >= df['bb_upper']) & (df['mfi'] > 80)
-    extreme_bottom = (df['low'] <= df['bb_lower']) & (df['mfi'] < 20)
+    df['long_sig'] = long_cond & (df['is_long_pos'] & ~df['is_long_pos'].shift(1).fillna(False))
+    df['short_sig'] = short_cond & (df['is_short_pos'] & ~df['is_short_pos'].shift(1).fillna(False))
 
-    close_cross_cloud_top = (df['close'] > cloud_top_calc) & (df['close'].shift(1) <= cloud_top_calc.shift(1))
-    close_cross_cloud_bottom = (df['close'] < cloud_bottom_calc) & (df['close'].shift(1) >= cloud_bottom_calc.shift(1))
+    # 역추세 다이아몬드
+    df['bearish_div'] = (df['high'] > df['high'].shift(1).rolling(5).max()) & (df['rsi'] < df['rsi'].shift(1).rolling(5).max()) & (df['rsi'] > 65)
+    df['bullish_div'] = (df['low'] < df['low'].shift(1).rolling(5).min()) & (df['rsi'] > df['rsi'].shift(1).rolling(5).min()) & (df['rsi'] < 35)
+    df['extreme_top'] = (df['high'] >= df['bb_upper']) & (df['rsi'] > 75) & (df['mfi'] > 80)
+    df['extreme_bottom'] = (df['low'] <= df['bb_lower']) & (df['rsi'] < 25) & (df['mfi'] < 20)
 
-    df['master_long'] = close_cross_cloud_top & (df['macd_line'] > df['macd_sig']) & vol_confirm
-    df['master_short'] = close_cross_cloud_bottom & (df['macd_line'] < df['macd_sig']) & vol_confirm
+    df['top'] = df['bearish_div'] | df['extreme_top']
+    df['bottom'] = df['bullish_div'] | df['extreme_bottom']
 
-    df['top_detected'] = bearish_div | extreme_top
-    df['bottom_detected'] = bullish_div | extreme_bottom
-
-    # === [4. 데이터 정제] ===
-    indicator_cols = ['kijun', 'senkou_a', 'senkou_b', 'rsi', 'macd_line', 'macd_sig', 'bb_upper', 'bb_middle', 'bb_lower']
+    # [4] 데이터 정제 및 리턴
+    indicator_cols = ['tenkan', 'kijun', 'senkou_a', 'senkou_b', 'cloud_top', 'cloud_bottom', 'sma_224', 'vwma_224', 'rsi', 'mfi', 'macd_line', 'macd_sig', 'bb_upper', 'bb_middle', 'bb_lower']
     df[indicator_cols] = df[indicator_cols].ffill().bfill()
+    
+    bool_cols = ['vol_confirm', 'fvg_bullish', 'fvg_bearish', 'swing_high', 'swing_low', 'is_long_pos', 'is_short_pos', 'long_sig', 'short_sig', 'bearish_div', 'bullish_div', 'extreme_top', 'extreme_bottom', 'top', 'bottom']
+    for col in bool_cols: df[col] = df[col].fillna(False).astype(bool)
 
-    for col in ['master_long', 'master_short', 'top_detected', 'bottom_detected']:
-        df[col] = df[col].fillna(False).astype(bool)
-
-    return df
+    return df.drop(columns=['pos_state'])
