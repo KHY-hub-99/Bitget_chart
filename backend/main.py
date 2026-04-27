@@ -498,6 +498,7 @@ async def get_simulation_replay(
     leverage: int = Query(10),
     tp_ratio: float = Query(0.05),
     sl_ratio: float = Query(0.05),
+    margin_ratio: float = Query(0.10, description="자산 대비 진입 비중 (0.1 = 10%)"),
     limit: int = Query(1000)
 ):
     feed = CryptoDataFeed(symbol=symbol, timeframe=timeframe)
@@ -509,16 +510,18 @@ async def get_simulation_replay(
     chart_df = feed.get_chart_df(limit=limit)
     chart_data = convert_df_to_chart_data(chart_df)
 
+    # 엔진 초기화 (수수료 및 슬리피지 설정)
     engine = SimulationEngine(fee_rate=Decimal('0.0005'), slippage_rate=Decimal('0.0002'))
     pos_mode = PositionMode.HEDGE if mode == "HEDGE" else PositionMode.ONE_WAY
     temp_wallet = Wallet(initial_balance=Decimal('10000.0'), position_mode=pos_mode)
 
     markers = []
+    # 공식: 입력받은 비중값을 Decimal로 변환
+    m_ratio_dec = Decimal(str(margin_ratio))
 
     for row in df.itertuples():
         curr_p = Decimal(str(row.close))
-        
-        #캔들의 꼬리 가격(High, Low)을 추출합니다.
+        # 공식: 캔들의 꼬리 가격(High, Low)을 추출하여 보수적 청산 체크에 활용
         high_p = Decimal(str(row.high))
         low_p = Decimal(str(row.low))
 
@@ -530,7 +533,7 @@ async def get_simulation_replay(
         m_long = getattr(row, 'master_long', False)
         m_short = getattr(row, 'master_short', False)
 
-        # 엔진에 High와 Low 가격을 같이 넘겨주어 꼬리 청산/손절을 완벽하게 잡아냅니다.
+        # [1] 트리거 체크 (보수적 접근: 손절 우선 체크 로직이 반영된 engine 호출)
         res_list = engine.check_triggers(
             wallet=temp_wallet, 
             symbol=symbol, 
@@ -543,11 +546,12 @@ async def get_simulation_replay(
             for res in res_list:
                 markers.append({
                     "time": ts,
-                    "action": "SELL" if res.get('reason') != 'LIQUIDATED' else "LIQUIDATED",
+                    "action": "SELL" if res.get('status') != 'LIQUIDATED' else "LIQUIDATED",
                     "price": float(res.get('price', curr_p)),
                     "reason": res.get('status', 'CLOSED')
                 })
 
+        # [2] 단방향 모드 스위칭 체크
         if pos_mode == PositionMode.ONE_WAY:
             pos_key = symbol
             if pos_key in temp_wallet.positions:
@@ -559,12 +563,12 @@ async def get_simulation_replay(
                         "time": ts, "action": "SELL", "price": float(curr_p), "reason": "SWITCHED"
                     })
 
+        # [3] 진입 로직 (신규 또는 불타기)
         if m_long or m_short:
             side = PositionSide.LONG if m_long else PositionSide.SHORT
             action = "BUY" if side == PositionSide.LONG else "SELL"
 
-            # 레버리지를 반영하여 실제 코인 가격의 목표 변동률을 계산합니다!
-            # 예: ROE 5% 목표, 레버리지 10x -> 실제 코인 가격은 0.5%만 움직여도 도달
+            # 공식: 실제 목표 변동률 = 목표 수익률(ROE) / 레버리지
             price_change_ratio_tp = Decimal(str(tp_ratio)) / Decimal(str(leverage))
             price_change_ratio_sl = Decimal(str(sl_ratio)) / Decimal(str(leverage))
 
@@ -578,24 +582,30 @@ async def get_simulation_replay(
             pos_key = engine._get_position_key(symbol, side, pos_mode)
             is_pyramid = pos_key in temp_wallet.positions
 
-            # 계산된 정확한 가격(tp_p, sl_p)을 넘겨줍니다.
-            engine.open_position(
-                wallet=temp_wallet, 
-                symbol=symbol, 
-                side=side, 
-                entry_price=curr_p, 
-                leverage=leverage, 
-                margin=Decimal('1000'), 
-                take_profit=tp_p, 
-                stop_loss=sl_p
-            )
+            # 공식: 계산된 증거금 = 현재 총 자산(Total Balance) * 진입 비중
+            calc_margin = temp_wallet.total_balance * m_ratio_dec
+            # 공식: 실제 투입 증거금 = min(계산된 금액, 현재 가용 잔고)
+            actual_margin = min(calc_margin, temp_wallet.available_balance)
 
-            markers.append({
-                "time": ts,
-                "action": action,
-                "price": float(curr_p),
-                "reason": "PYRAMID" if is_pyramid else "ENTRY"
-            })
+            # 최소 주문 금액(10 USDT) 이상일 때만 진입 허용
+            if actual_margin >= Decimal('10'):
+                engine.open_position(
+                    wallet=temp_wallet, 
+                    symbol=symbol, 
+                    side=side, 
+                    entry_price=curr_p, 
+                    leverage=leverage, 
+                    margin=actual_margin, 
+                    take_profit=tp_p, 
+                    stop_loss=sl_p
+                )
+
+                markers.append({
+                    "time": ts,
+                    "action": action,
+                    "price": float(curr_p),
+                    "reason": "PYRAMID" if is_pyramid else "ENTRY"
+                })
 
     return {
         "status": "success",
