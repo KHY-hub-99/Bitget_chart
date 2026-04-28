@@ -144,7 +144,7 @@ class CryptoDataFeed:
             ]
             for col in int_cols:
                 if col in temp_df.columns:
-                    temp_df[col] = temp_df[col].fillna(0).astype(int)
+                    temp_df[col] = temp_df[col].fillna(0).infer_objects(copy=False).astype(int)
             
             temp_df = temp_df.replace([np.inf, -np.inf], np.nan)
             
