@@ -8,7 +8,7 @@ const WS_BASE = "ws://localhost:8000";
 
 // 백엔드에서 전달받는 캔들 1개(또는 틱)의 전체 데이터 포맷
 export interface StrategyChartData {
-  time: number; // Unix Timestamp (초 또는 밀리초)
+  time: number; // Unix Timestamp (초)
   open: number;
   high: number;
   low: number;
@@ -28,15 +28,24 @@ export interface StrategyChartData {
   swingLowLevel?: number;
   equilibrium?: number;
 
-  // 4. 역추세 및 익절 마커 시그널 (1 or 0, true or false)
-  TOP?: number; // 숏 익절 다이아몬드
-  BOTTOM?: number; // 롱 익절 다이아몬드
+  // 4. 추적 스윙 및 시장 추세 (NEW)
+  trend?: number; // 1 (상승), -1 (하락)
+  trailingTop?: number; // 추적 고점
+  trailingBottom?: number; // 추적 저점 (SL 기준)
+  topType?: string; // 'Strong High' / 'Weak High'
+  bottomType?: string; // 'Strong Low' / 'Weak Low'
 
-  // 5. 진입 규칙 시그널 (1 or 0)
-  entrySmcLong?: number;
-  entrySmcShort?: number;
+  // 5. 역추세 및 익절 마커 시그널
+  TOP?: number; // 롱 익절 다이아몬드 (1 or 0)
+  BOTTOM?: number; // 숏 익절 다이아몬드 (1 or 0)
+
+  // 6. 하이브리드 진입 규칙 시그널 (SMA 추가됨)
   entryVwmaLong?: number;
   entryVwmaShort?: number;
+  entrySmaLong?: number; // Rule 2: SMA 터치
+  entrySmaShort?: number;
+  entrySmcLong?: number; // Rule 3: SMC 터치
+  entrySmcShort?: number;
 }
 
 // --- [ 1. 차트 및 기존 데이터 관련 API ] ---
@@ -45,13 +54,12 @@ export const fetchChartData = async (
   symbol: string,
   timeframe: string,
   days: number,
-): Promise<StrategyChartData[]> => {
+): Promise<{ data: StrategyChartData[]; markers: any[]; metadata: any }> => {
   try {
     const response = await axios.get(`${API_BASE}/api/history`, {
       params: { symbol, timeframe, days },
     });
-    // 백엔드에서 내려주는 데이터가 response.data.data 배열 형태라면 맞게 수정 필요
-    return response.data;
+    return response.data; // 이제 백엔드에서 chart_data 전체(markers, metadata 포함)를 리턴함
   } catch (error) {
     console.error("🔴 데이터 통신 에러:", error);
     throw error;
@@ -61,14 +69,14 @@ export const fetchChartData = async (
 export const subscribeChartData = (
   symbol: string,
   timeframe: string,
-  onMessage: (data: StrategyChartData) => void, // any 대신 명시적 타입 사용
+  onMessage: (data: any) => void,
 ) => {
   const ws = new WebSocket(`${WS_BASE}/ws/chart/${symbol}/${timeframe}`);
 
   ws.onopen = () => console.log(`🟢 웹소켓 연결 성공: ${symbol}-${timeframe}`);
   ws.onmessage = (event) => {
     try {
-      const data: StrategyChartData = JSON.parse(event.data);
+      const data = JSON.parse(event.data);
       onMessage(data);
     } catch (error) {
       console.error("🔴 웹소켓 파싱 에러:", error);
@@ -76,7 +84,6 @@ export const subscribeChartData = (
   };
   ws.onerror = (error) => console.error("🔴 웹소켓 에러:", error);
 
-  // 컴포넌트 언마운트 시 구독 해제를 위해 close 함수를 포함한 객체 반환을 권장
   return {
     ws,
     close: () => {
@@ -88,6 +95,7 @@ export const subscribeChartData = (
 
 // --- [ 2. 시뮬레이션(격리 모드) 전용 API ] ---
 
+// 백엔드의 최신 Position 모델에 맞춤
 export interface Position {
   symbol: string;
   side: "LONG" | "SHORT";
@@ -98,31 +106,36 @@ export interface Position {
   isolated_margin: number;
   liquidation_price: number;
   unrealized_pnl: number;
-  take_profit_price: number | null;
-  stop_loss_price: number | null;
+  take_profit?: number | null; // 백엔드의 entry_equilibrium 매핑
+  stop_loss?: number | null; // 백엔드의 stop_loss_price 매핑
+
+  // 분할 진입 및 전략 추적 필드
+  entry_tags: string[]; // 예: ["SMA", "VWMA"]
+  is_partial_closed: boolean; // 50% 익절 여부
+  sl_type: string | null; // 예: "SMC_TRAILING_STRONG_LOW"
+  entry_rule: string; // 예: "RULE_2_SMA"
 }
 
 export interface SimulationStatus {
   total_balance: number;
   available_balance: number;
   frozen_margin: number;
-  position_mode: "ONE_WAY" | "HEDGE"; // 모드 상태 추가
+  position_mode: "ONE_WAY" | "HEDGE";
   positions: { [key: string]: Position };
 }
 
 export const simulationApi = {
-  // 1. 현재 지갑/포지션 상태 가져오기
   getStatus: async (): Promise<SimulationStatus> => {
     const response = await axios.get(`${API_BASE}/api/simulation/status`);
     return response.data;
   },
 
-  // 2. 시장가 주문 넣기
+  // margin 대신 margin_ratio 사용
   placeOrder: async (orderData: {
     symbol: string;
     side: "LONG" | "SHORT";
     leverage: number;
-    margin: number;
+    margin_ratio: number; // ex: 0.33
     current_price: number;
     take_profit?: number;
     stop_loss?: number;
@@ -134,19 +147,15 @@ export const simulationApi = {
     return response.data;
   },
 
-  // 3. 포지션 시장가 종료
   closePosition: async (targetKey: string) => {
     const response = await axios.post(
       `${API_BASE}/api/simulation/close`,
       null,
-      {
-        params: { symbol: targetKey },
-      },
+      { params: { symbol: targetKey } },
     );
     return response.data;
   },
 
-  // 4. 틱 검사 (청산/TP/SL 확인)
   processTick: async (symbol: string, currentPrice: number) => {
     const response = await axios.post(`${API_BASE}/api/simulation/tick`, {
       symbol: symbol,
@@ -155,13 +164,11 @@ export const simulationApi = {
     return response.data;
   },
 
-  // 5. 초기화
   reset: async () => {
     const response = await axios.post(`${API_BASE}/api/simulation/reset`);
     return response.data;
   },
 
-  // 6. 포지션 모드 변경
   setMode: async (mode: "ONE_WAY" | "HEDGE") => {
     const response = await axios.post(`${API_BASE}/api/simulation/mode`, {
       mode: mode,
@@ -170,18 +177,16 @@ export const simulationApi = {
   },
 };
 
-// --- [ 3. 전략 분석 및 최적화 관련 API (신규 추가) ] ---
+// --- [ 3. 전략 분석 및 최적화 관련 API ] ---
 
+// tp_ratio/sl_ratio 대신 DB 컬럼명에 맞춘 marginRatio 사용
 export interface StrategyRank {
-  position_mode: string;
+  positionMode: string;
   leverage: number;
-  tp_ratio: number;
-  sl_ratio: number;
+  marginRatio: number;
   total_trades: number;
   wins: number;
   losses: number;
-  liquidations: number;
-  switches: number;
   total_pnl: number;
   avg_pnl: number;
   total_pyramid_count: number;
@@ -191,7 +196,6 @@ export interface StrategyRank {
 }
 
 export const analysisApi = {
-  // 1. 전략 랭킹 가져오기
   getRanking: async (
     symbol: string = "ALL",
     timeframe: string = "ALL",
@@ -202,19 +206,15 @@ export const analysisApi = {
     return response.data.data;
   },
 
-  // 2. 전체 시뮬레이션 실행 트리거
   runFullSimulation: async (symbol: string, timeframe: string) => {
     const response = await axios.post(
       `${API_BASE}/api/simulation/run-full`,
       null,
-      {
-        params: { symbol, timeframe },
-      },
+      { params: { symbol, timeframe } },
     );
     return response.data;
   },
 
-  // 3. 과거 데이터 동기화 (Days 기반)
   syncHistoricalData: async (
     symbol: string,
     timeframe: string,
@@ -226,27 +226,23 @@ export const analysisApi = {
     return response.data;
   },
 
-  // 4. 시뮬레이션 로그 웹소켓 주소 반환
   getLogSocketUrl: () => `${WS_BASE}/ws/simulation/logs`,
 
-  // 🟢 [추가됨] 5. 차트 복기(Replay) 데이터 요청
+  // tp_ratio, sl_ratio 파라미터 삭제, margin_ratio 적용
   getSimulationReplay: async (
     symbol: string,
     timeframe: string,
     mode: string,
     leverage: number,
-    tp_ratio: number,
-    sl_ratio: number,
-  ): Promise<{ data: any[]; markers: any[] }> => {
+    margin_ratio: number, // (ex: 0.33)
+  ): Promise<{ data: any; markers: any[] }> => {
     const response = await axios.get(`${API_BASE}/api/simulation/replay`, {
       params: {
         symbol,
         timeframe,
         mode,
         leverage,
-        tp_ratio,
-        sl_ratio,
-        limit: 1000, // 최근 1,000개 캔들 기준 (필요시 조절 가능)
+        margin_ratio,
       },
     });
     return response.data;
