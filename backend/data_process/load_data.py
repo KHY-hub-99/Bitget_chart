@@ -6,6 +6,7 @@ import os
 import time
 from datetime import datetime, timezone, timedelta
 from data_process.pine_data import apply_master_strategy
+
 pd.set_option('future.no_silent_downcasting', True)
 
 class CryptoDataFeed:
@@ -37,7 +38,7 @@ class CryptoDataFeed:
                 )
             """)
             
-            # 제공해주신 표준 CamelCase 리스트로 컬럼 정의
+            # [업데이트됨] 제공해주신 최신 표준 CamelCase 리스트로 컬럼 정의
             indicator_columns = [
                 # 일목균형표 및 구름대
                 ('tenkan', 'REAL'), ('kijun', 'REAL'), 
@@ -51,20 +52,19 @@ class CryptoDataFeed:
                 ('bbLower', 'REAL'), ('bbMid', 'REAL'), ('bbUpper', 'REAL'),
                 # SMC 구조 및 가격 레벨
                 ('swingHighLevel', 'REAL'), ('swingLowLevel', 'REAL'), ('equilibrium', 'REAL'),
-                # 매매 조건 및 확정 시그널
-                ('longCondition', 'INTEGER'), ('shortCondition', 'INTEGER'),
-                ('longSig', 'INTEGER'), ('shortSig', 'INTEGER'),
-                # 하이브리드 전략 세부 진입 규칙 (Rule 1 & Rule 2)
-                ('entryVwmaLong', 'INTEGER'), ('entrySmcLong', 'INTEGER'),
-                ('entryVwmaShort', 'INTEGER'), ('entrySmcShort', 'INTEGER'),
+                # 추적 스윙 및 시장 추세 (NEW)
+                ('trend', 'INTEGER'), ('trailingTop', 'REAL'), ('trailingBottom', 'REAL'),
+                ('topType', 'TEXT'), ('bottomType', 'TEXT'),
                 # 역추세 세부 신호 및 최종 마커
                 ('bearishDiv', 'INTEGER'), ('bullishDiv', 'INTEGER'),
                 ('extremeTop', 'INTEGER'), ('extremeBottom', 'INTEGER'),
                 ('TOP', 'INTEGER'), ('BOTTOM', 'INTEGER'),
-                # SMC 구조 분석 지표 (추가 시각화용)
-                ('fvgBullish', 'INTEGER'), ('fvgBearish', 'INTEGER'),
-                ('swingBOS', 'INTEGER'), ('swingCHOCH', 'INTEGER'),
-                ('internalBOS', 'INTEGER'), ('internalCHOCH', 'INTEGER')
+                # 하이브리드 전략 세부 진입 규칙 (Rule 1 & Rule 2)
+                ('entryVwmaLong', 'INTEGER'), ('entrySmcLong', 'INTEGER'),
+                ('entryVwmaShort', 'INTEGER'), ('entrySmcShort', 'INTEGER'),
+                # 매매 조건 및 확정 시그널
+                ('longCondition', 'INTEGER'), ('shortCondition', 'INTEGER'),
+                ('longSig', 'INTEGER'), ('shortSig', 'INTEGER')
             ]
             
             cursor.execute(f'PRAGMA table_info("{self.symbol}")')
@@ -91,6 +91,10 @@ class CryptoDataFeed:
                     entryBbUpper REAL, entryBbMid REAL, entryBbLower REAL,
                     entrySma224 REAL, entryVwma224 REAL, 
                     entrySwingHighLevel REAL, entrySwingLowLevel REAL, entryEquilibrium REAL,
+                    
+                    -- 추적 스윙 피처 추가
+                    entryTrend INTEGER, entryTrailingTop REAL, entryTrailingBottom REAL,
+                    entryTopType TEXT, entryBottomType TEXT,
 
                     -- 진입 근거 및 규칙 (Rule 1 & Rule 2)
                     entryVwmaLong INTEGER, entrySmcLong INTEGER, 
@@ -129,7 +133,7 @@ class CryptoDataFeed:
         if df_calc.empty: return
         try:
             temp_df = df_calc.reset_index().copy()
-            # 컬럼명을 문자열로 유지 (강제 소문자 변환 제거)
+            # 컬럼명을 문자열로 유지
             temp_df.columns = [str(c) for c in temp_df.columns]
             
             if 'time' in temp_df.columns:
@@ -137,11 +141,12 @@ class CryptoDataFeed:
                 
             temp_df['timeframe'] = self.timeframe
             
-            # 정수형/불리언 컬럼 리스트 (pine_data.py 기준)
+            # [업데이트됨] 정수형/불리언 컬럼 리스트
             int_cols = [
-                'volConfirm', 'longCondition', 'shortCondition', 'longSig', 'shortSig',
+                'volConfirm', 'trend',
                 'bearishDiv', 'bullishDiv', 'extremeTop', 'extremeBottom', 'TOP', 'BOTTOM',
-                'fvgBullish', 'fvgBearish', 'swingBOS', 'swingCHOCH', 'internalBOS', 'internalCHOCH'
+                'entryVwmaLong', 'entrySmcLong', 'entryVwmaShort', 'entrySmcShort',
+                'longCondition', 'shortCondition', 'longSig', 'shortSig'
             ]
             for col in int_cols:
                 if col in temp_df.columns:
@@ -149,15 +154,18 @@ class CryptoDataFeed:
             
             temp_df = temp_df.replace([np.inf, -np.inf], np.nan)
             
-            # 저장할 전체 컬럼 리스트 (SMC Level 포함)
+            # [업데이트됨] 저장할 전체 컬럼 리스트 (명세서 100% 일치)
             db_cols = [
                 'time', 'timeframe', 'open', 'high', 'low', 'close', 'volume',
                 'tenkan', 'kijun', 'senkouA', 'senkouB', 'cloudTop', 'cloudBottom',
-                'sma224', 'vwma224', 'volConfirm', 'rsi', 'mfi', 'macdLine', 'signalLine',
-                'bbUpper', 'bbMid', 'bbLower', 'swingHighLevel', 'swingLowLevel', 'equilibrium',
-                'longCondition', 'shortCondition', 'longSig', 'shortSig',
+                'sma224', 'vwma224', 'volConfirm', 
+                'rsi', 'mfi', 'macdLine', 'signalLine', 
+                'bbLower', 'bbMid', 'bbUpper', 
+                'swingHighLevel', 'swingLowLevel', 'equilibrium',
+                'trend', 'trailingTop', 'trailingBottom', 'topType', 'bottomType',
                 'bearishDiv', 'bullishDiv', 'extremeTop', 'extremeBottom', 'TOP', 'BOTTOM',
-                'fvgBullish', 'fvgBearish', 'swingBOS', 'swingCHOCH', 'internalBOS', 'internalCHOCH'
+                'entryVwmaLong', 'entrySmcLong', 'entryVwmaShort', 'entrySmcShort',
+                'longCondition', 'shortCondition', 'longSig', 'shortSig'
             ]
             
             for col in db_cols:

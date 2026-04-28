@@ -53,6 +53,14 @@
 - `TOP`
 - `BOTTOM`
 
+**추적 스윙 및 시장 추세 (Trailing Extremes & Trend)**
+
+- `trend`
+- `trailingTop`
+- `trailingBottom`
+- `topType`
+- `bottomType`
+
 **하이브리드 전략 세부 진입 규칙 (Rule 1 & Rule 2)**
 
 - `entryVwmaLong`
