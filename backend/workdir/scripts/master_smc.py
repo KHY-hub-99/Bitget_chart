@@ -4,9 +4,10 @@
 from pynecore import Series, Persistent
 from pynecore.lib import script, ta, math, close, high, low, open, volume, na, nz, plot, plotshape, color
 
+# [1. Script Definition]
 @script.indicator("Master SMC Strategy", overlay=True)
 def main():
-    # --- [파라미터 설정] ---
+    # --- [Parameter Settings] ---
     tenkanLen = 9
     kijunLen = 26
     senkouBLen = 52
@@ -19,22 +20,24 @@ def main():
     whaleLen = 224
     swingsLength = 50
 
-    # --- [2. 지표 계산] ---
+    # --- [2. Indicator Calculations] ---
     tenkan: Series[float] = (ta.highest(high, tenkanLen) + ta.lowest(low, tenkanLen)) / 2
     kijun: Series[float] = (ta.highest(high, kijunLen) + ta.lowest(low, kijunLen)) / 2
     
-    # 선행스팬 계산
+    # Leading Span Calculation
     senkouA: Series[float] = (tenkan + kijun) / 2
     senkouB: Series[float] = (ta.highest(high, senkouBLen) + ta.lowest(low, senkouBLen)) / 2
 
-    # [수정] displacement-1 만큼 과거의 값을 가져오기 위해 시리즈 참조
-    # PyneCore에서 Series 변수는 대괄호 참조가 가능합니다.
+    # [Update] Reference series to fetch past values by displacement-1
+    # In PyneCore, Series variables allow square bracket referencing.
     cloudTop: Series[float] = math.max(senkouA[displacement-1], senkouB[displacement-1])
     cloudBottom: Series[float] = math.min(senkouA[displacement-1], senkouB[displacement-1])
 
+    # Whale 224
     sma224: Series[float] = ta.sma(close, whaleLen)
     vwma224: Series[float] = ta.vwma(close, whaleLen)
 
+    # Technical Indicators
     macdLine, signalLine, _ = ta.macd(close, 12, 26, 9)
     rsiVal: Series[float] = ta.rsi(close, rsiLen)
     mfiVal: Series[float] = ta.mfi(close, mfiLen)
@@ -43,7 +46,7 @@ def main():
     volSma = ta.sma(volume, 20)
     volConfirm = volume > volSma * volMult
 
-    # --- [3. 신호 로직] ---
+    # --- [3. Signal Logic] ---
     isLongPos: Persistent[bool] = False
     isShortPos: Persistent[bool] = False
     wasLongPos: Persistent[bool] = False
@@ -59,17 +62,18 @@ def main():
         isShortPos = True
         isLongPos = False
 
-    # [수정] Persistent 변수는 [1]이 안되므로 wasLongPos(어제값)를 사용
+    # [Update] Persistent variables do not support [1], so using wasLongPos (previous value)
+    # This prevents duplicate signals by checking the previous bar's state
     longSig = longCondition and (isLongPos and not wasLongPos)
     shortSig = shortCondition and (isShortPos and not wasShortPos)
     
-    # 다음 바를 위해 현재 값을 어제 값으로 저장
+    # Store current value as previous value for the next bar
     wasLongPos = isLongPos
     wasShortPos = isShortPos
 
-    # --- [4. 역추세 다이아몬드 신호 수정] ---
-    # [수정] ta.highest() 결과에 바로 [1]을 붙이면 float 에러가 납니다.
-    # Series 변수에 먼저 할당한 후 [1]을 참조해야 합니다.
+    # --- [4. Counter-trend Diamond Signal Update] ---
+    # [Update] Attaching [1] directly to ta.highest() result causes a float error.
+    # Must assign to a Series variable first before referencing [1].
     hh5: Series[float] = ta.highest(high, 5)
     ll5: Series[float] = ta.lowest(low, 5)
     rsiH5: Series[float] = ta.highest(rsiVal, 5)
@@ -84,32 +88,38 @@ def main():
     topDiamond = bearishDiv or extremeTop
     bottomDiamond = bullishDiv or extremeBottom
 
-    # --- [5. SMC 구조 추적] ---
+    # --- [5. SMC Structure Tracking] ---
     ph = ta.pivothigh(high, swingsLength, swingsLength)
     pl = ta.pivotlow(low, swingsLength, swingsLength)
 
+    # Declare persistent state variables
     swingHighLevel: Persistent[float] = na
     trailingBottom: Persistent[float] = na
-    trend: Persistent[int] = 0 
+    trend: Persistent[int] = 0 # 1: Bull, -1: Bear
 
+    # Update when pivot occurs
     if not na(ph):
         swingHighLevel = ph
     if not na(pl):
         trailingBottom = pl
 
+    # Real-time Trailing expansion (when price pushes boundaries)
     if not na(swingHighLevel):
         swingHighLevel = math.max(high, swingHighLevel)
     if not na(trailingBottom):
         trailingBottom = math.min(low, trailingBottom)
 
+    # Trend determination
     if not na(swingHighLevel) and close > swingHighLevel:
         trend = 1
     elif not na(trailingBottom) and close < trailingBottom:
         trend = -1
 
-    # nz()를 사용하여 값이 na일 경우 에러 방지
+    # Equilibrium calculation (average of upper/lower levels)
+    # Use nz() to prevent errors when values are na
     equilibrium = (nz(swingHighLevel) + nz(trailingBottom)) / 2
 
+    # --- [6. Return] ---
     return {
         "tenkan": tenkan,
         "kijun": kijun,

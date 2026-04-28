@@ -2,9 +2,7 @@ import requests
 import pandas as pd
 import numpy as np
 import sqlite3
-import os
 import time
-import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -12,8 +10,7 @@ from pynecore.core.script_runner import ScriptRunner
 from pynecore.core.syminfo import SymInfo
 from pynecore.core.ohlcv_file import OHLCV
 
-# 윈도우 인코딩 및 판다스 설정
-os.environ["PYTHONUTF8"] = "1"
+# 판다스 설정
 pd.set_option('future.no_silent_downcasting', True)
 
 class CryptoDataFeed:
@@ -25,7 +22,7 @@ class CryptoDataFeed:
         
         # [경로 설정]
         self.base_dir = Path(__file__).resolve().parent.parent
-        self.script_file = self.base_dir / "backend" / "workdir" / "scripts" / "master_smc.py"
+        self.script_file = self.base_dir / "workdir" / "scripts" / "master_smc.py"
         
         db_folder = self.base_dir / "market_data"
         db_folder.mkdir(parents=True, exist_ok=True)
@@ -134,27 +131,42 @@ class CryptoDataFeed:
         return pd.DataFrame(results)
 
     def save_enriched_df(self, df_calc):
-        """지표가 계산된 DF를 DB에 저장 (UPSERT)"""
+        """지표가 계산된 DF를 DB에 저장 (NA 객체 처리 및 Pandas 최신버전 대응)"""
         if df_calc.empty: return
         try:
             temp_df = df_calc.copy()
             temp_df['timeframe'] = self.timeframe
             
-            # 최종 컬럼 순서 (기본 7개 + 지표 23개)
-            db_cols = ['time', 'timeframe', 'open', 'high', 'low', 'close', 'volume'] + self.standard_cols
-            
-            # 정수형 컬럼 데이터 정리
+            # [1] INTEGER 컬럼들 0/1 강제 (NULL 방지)
             int_cols = ["longSig", "shortSig", "topDiamond", "bottomDiamond", "trend"]
             for col in int_cols:
                 if col in temp_df.columns:
                     temp_df[col] = pd.to_numeric(temp_df[col], errors='coerce').fillna(0).astype(int)
+
+            # [2] PyneCore NA 객체를 None으로 변환하는 함수
+            def clean_na_values(x):
+                if pd.isna(x): return None
+                # PyneCore NA 객체 체크
+                if hasattr(x, '__class__') and 'NA' in x.__class__.__name__:
+                    return None
+                return x
+
+            # [수정 포인트] Pandas 2.1.0+ 에서는 applymap 대신 map을 사용합니다.
+            if hasattr(temp_df, 'map'):
+                temp_df = temp_df.map(clean_na_values)
+            else:
+                temp_df = temp_df.applymap(clean_na_values)
+
+            # [3] 최종 DB 컬럼 순서 배치 (23개 표준 컬럼 기준)
+            db_cols = ['time', 'timeframe', 'open', 'high', 'low', 'close', 'volume'] + self.standard_cols
             
-            # 존재하지 않는 컬럼 처리
             for col in db_cols:
-                if col not in temp_df.columns: temp_df[col] = None
+                if col not in temp_df.columns:
+                    temp_df[col] = None
             
             final_df = temp_df[db_cols].where(pd.notnull(temp_df[db_cols]), None)
             
+            # [4] UPSERT 실행
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cols_str = ", ".join([f'"{c}"' for c in db_cols])
@@ -162,10 +174,13 @@ class CryptoDataFeed:
                 update_cols = [c for c in db_cols if c not in ['time', 'timeframe']]
                 update_str = ", ".join([f'"{c}"=excluded."{c}"' for c in update_cols])
                 
-                sql = f'INSERT INTO "{self.symbol}" ({cols_str}) VALUES ({placeholders}) ON CONFLICT(time, timeframe) DO UPDATE SET {update_str}'
+                sql = f'''
+                    INSERT INTO "{self.symbol}" ({cols_str}) VALUES ({placeholders}) 
+                    ON CONFLICT(time, timeframe) DO UPDATE SET {update_str}
+                '''
                 cursor.executemany(sql, final_df.values.tolist())
                 conn.commit()
-                print(f"[SAVE] {self.symbol} 지표 데이터 업데이트 완료.")
+                print(f"[SUCCESS] {self.symbol} 데이터베이스 저장 완료.")
                 
         except Exception as e:
             print(f"[SAVE ERROR] {e}")
