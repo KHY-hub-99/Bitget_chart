@@ -137,8 +137,8 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     df['entryVwmaShort'] = is_below_confirm.shift(1) & (df['high'] >= df['vwma224']) & trend_short
     
     # 룰 2: SMC 구조적 바닥/천장 진입 + [추세 필터 추가]
-    df['entrySmcLong'] = is_above_confirm.shift(1) & (df['low'] <= df['swingLowLevel'] * 1.005) & (df['low'] >= df['swingLowLevel']) & trend_long
-    df['entrySmcShort'] = is_below_confirm.shift(1) & (df['high'] >= df['swingHighLevel'] * 0.995) & (df['high'] <= df['swingHighLevel']) & trend_short
+    df['entrySmcLong'] = is_above_confirm.shift(1) & (df['low'] <= df['swingLowLevel']) & (df['low'] >= df['swingLowLevel']) & trend_long
+    df['entrySmcShort'] = is_below_confirm.shift(1) & (df['high'] >= df['swingHighLevel']) & (df['high'] <= df['swingHighLevel']) & trend_short
 
     # 최종 조건 결합
     df['longCondition'] = df['entryVwmaLong'] | df['entrySmcLong']
