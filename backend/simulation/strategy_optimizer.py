@@ -26,7 +26,7 @@ class StrategyOptimizer:
         time_col = 'time' if 'time' in df_sim.columns else 'index'
         
         leverages = [10, 15, 20]
-        marginRatios = [Decimal('0.2'), Decimal('0.33'), Decimal('0.5')]
+        marginRatios = [Decimal('0.2'), Decimal('0.33'), Decimal('0.5')] # 분할 진입용 1회 비중
         
         TARGET_ROE = Decimal('0.15')
         SL_MULTIPLIER = Decimal('1.1')
@@ -34,7 +34,7 @@ class StrategyOptimizer:
         combinations = list(itertools.product([PositionMode.ONE_WAY], leverages, marginRatios))
         self.logger(f"[INFO] {symbol} {timeframe} 시뮬레이션 시작 (조합: {len(combinations)}개)")
         
-        # [표준 반영] longSig/shortSig가 발생한 시점들 추출
+        # 최초 진입 신호 추출
         signal_positions = df_sim[(df_sim['longSig'] == 1) | (df_sim['shortSig'] == 1)].index
         ml_data_batch = []
 
@@ -47,9 +47,26 @@ class StrategyOptimizer:
             side = PositionSide.LONG if is_long else PositionSide.SHORT
             entryPrice = Decimal(str(row['close']))
 
-            # [표준 반영] SMC 기반 가격 정보 (룰 2용)
-            smcSl = Decimal(str(row.get('swingLowLevel' if is_long else 'swingHighLevel', 0)))
+            # 어떤 규칙으로 첫 진입을 했는지 태그 분석 (우선순위: SMC > SMA > VWMA)
+            if is_long:
+                if row.get('entrySmcLong') == 1:
+                    entry_tag, entry_rule = "SMC", "RULE_3_SMC"
+                elif row.get('entrySmaLong') == 1:
+                    entry_tag, entry_rule = "SMA", "RULE_2_SMA"
+                else:
+                    entry_tag, entry_rule = "VWMA", "RULE_1_VWMA"
+            else:
+                if row.get('entrySmcShort') == 1:
+                    entry_tag, entry_rule = "SMC", "RULE_3_SMC"
+                elif row.get('entrySmaShort') == 1:
+                    entry_tag, entry_rule = "SMA", "RULE_2_SMA"
+                else:
+                    entry_tag, entry_rule = "VWMA", "RULE_1_VWMA"
+
+            # SMC 타겟 및 손절 정보 (Trailing Extremes 적용)
             eqP = Decimal(str(row.get('equilibrium', 0)))
+            trailing_sl = Decimal(str(row.get('trailingBottom' if is_long else 'trailingTop', 0)))
+            sl_type = str(row.get('bottomType' if is_long else 'topType', 'Unknown'))
 
             for mode, lev, mRatio in combinations:
                 wallet = Wallet(initial_balance=Decimal('10000'), position_mode=mode)
@@ -58,26 +75,25 @@ class StrategyOptimizer:
                 roeSlDist = entryPrice * roeSlRatio
                 roeSlPrice = (entryPrice - roeSlDist) if is_long else (entryPrice + roeSlDist)
 
-                # [표준 반영] 하이브리드 손절 판별 (entrySmcLong/Short)
-                isRule2 = row.get('entrySmcLong' if is_long else 'entrySmcShort') == 1
-                
-                if isRule2 and smcSl > 0:
-                    finalSl, slTag = smcSl, "RULE_2_SMC"
+                # 하이브리드 손절 판별: SMC 진입이면 Trailing SL (Strong/Weak) 사용, 아니면 일반 ROE 손절
+                if entry_tag == "SMC" and trailing_sl > 0:
+                    finalSl, slTag = trailing_sl, f"SMC_TRAILING_{sl_type.replace(' ', '_').upper()}"
                 else:
                     finalSl, slTag = roeSlPrice, "RULE_1_ROE"
 
-                # 엔진 진입 실행
+                # 엔진 진입 실행 (SMA/VWMA/SMC 태그를 명확히 전달)
                 self.engine.open_position(
                     wallet=wallet, symbol=symbol, side=side, entry_price=entryPrice,
-                    leverage=lev, margin_ratio=mRatio, sl_price=finalSl, equilibrium=eqP,
-                    tag=slTag
+                    leverage=lev, margin_ratio=mRatio, sl_price=finalSl, sl_type=sl_type, equilibrium=eqP,
+                    entry_rule=entry_rule, tag=entry_tag
                 )
 
                 future_df = df_sim.iloc[pos_idx + 1 : pos_idx + 201]
                 duration, pyramidCount, minPnl = 0, 0, Decimal('0')
                 maxMargin = wallet.frozen_margin
-                posKey = self.engine._get_position_key(symbol, side, mode)
+                posKey = symbol if mode == PositionMode.ONE_WAY else f"{symbol}_{side.value}"
 
+                # 미래 캔들을 순회하며 엔진의 트리거 작동 확인
                 for f_idx in range(len(future_df)):
                     duration += 1
                     curr_data = future_df.iloc[f_idx].to_dict()
@@ -91,7 +107,8 @@ class StrategyOptimizer:
                     res_list = self.engine.check_triggers(wallet, curr_data)
                     if res_list:
                         for r in res_list:
-                            if "LADDER_ENTRY" in r['status']: pyramidCount += 1
+                            # 엔진이 LADDER_MERGED_VWMA 등으로 추가 진입을 응답하면 피라미딩 카운트 증가
+                            if "LADDER" in r['status']: pyramidCount += 1
                         if posKey not in wallet.positions:
                             resultStatus = res_list[-1]['status']
                             break
@@ -101,7 +118,7 @@ class StrategyOptimizer:
                 finalPnl = wallet.total_balance - Decimal('10000')
                 mddRate = float((minPnl / maxMargin) * 100) if maxMargin > 0 else 0.0
 
-                # [표준 반영] ML 데이터 수집 - Dictionary 키값을 DB 컬럼명과 100% 일치시킴
+                # ML 데이터 수집 - DB 스키마와 100% 일치 (새로운 컬럼 모두 추가됨)
                 ml_data_batch.append({
                     "signalTime": db_time, "symbol": symbol, "timeframe": timeframe, "signalType": signalType,
                     "entryOpen": float(row['open']), "entryHigh": float(row['high']), "entryLow": float(row['low']),
@@ -111,11 +128,23 @@ class StrategyOptimizer:
                     "entryRsi": float(row.get('rsi', 0)), "entryMacdLine": float(row.get('macdLine', 0)),
                     "entrySignalLine": float(row.get('signalLine', 0)), "entryMfi": float(row.get('mfi', 0)),
                     "entrySma224": float(row.get('sma224', 0)), "entryVwma224": float(row.get('vwma224', 0)),
-                    "entryEquilibrium": float(eqP), "entrySwingLowLevel": float(smcSl),
-                    "entryVwmaLong": int(row.get('entryVwmaLong', 0)), "entrySmcLong": int(row.get('entrySmcLong', 0)),
-                    "entryVwmaShort": int(row.get('entryVwmaShort', 0)), "entrySmcShort": int(row.get('entrySmcShort', 0)),
+                    "entrySwingHighLevel": float(row.get('swingHighLevel', 0)), "entrySwingLowLevel": float(row.get('swingLowLevel', 0)), 
+                    "entryEquilibrium": float(eqP),
+                    
+                    # 추적 스윙 및 구조 피처 
+                    "entryTrend": int(row.get('trend', 0)),
+                    "entryTrailingTop": float(row.get('trailingTop', 0)),
+                    "entryTrailingBottom": float(row.get('trailingBottom', 0)),
+                    "entryTopType": str(row.get('topType', '')),
+                    "entryBottomType": str(row.get('bottomType', '')),
+
+                    # 하이브리드 진입 규칙
+                    "entryVwmaLong": int(row.get('entryVwmaLong', 0)), "entrySmaLong": int(row.get('entrySmaLong', 0)), "entrySmcLong": int(row.get('entrySmcLong', 0)),
+                    "entryVwmaShort": int(row.get('entryVwmaShort', 0)), "entrySmaShort": int(row.get('entrySmaShort', 0)), "entrySmcShort": int(row.get('entrySmcShort', 0)),
+                    
                     "positionMode": mode.value, "leverage": lev, "marginRatio": float(mRatio),
-                    "appliedSlRatio": float(abs(finalSl - entryPrice) / entryPrice), "slTag": slTag,
+                    "appliedSlRatio": float(abs(finalSl - entryPrice) / entryPrice) if entryPrice > 0 else 0, 
+                    "slTag": slTag,
                     "resultStatus": resultStatus, "realizedPnl": float(finalPnl),
                     "durationCandles": duration, "pyramidCount": pyramidCount, "mddRate": mddRate
                 })
@@ -128,7 +157,7 @@ class StrategyOptimizer:
         try:
             df_all = pd.DataFrame(ml_records)
             with sqlite3.connect(self.db_path) as conn:
-                # 1. ml_trading_dataset 저장 (표준 CamelCase 반영)
+                # 1. ml_trading_dataset 저장
                 keys = ml_records[0].keys()
                 cols_str = ", ".join([f'"{k}"' for k in keys])
                 placeholders = ", ".join(["?"] * len(keys))
@@ -139,7 +168,7 @@ class StrategyOptimizer:
                 sql_ml = f"INSERT INTO ml_trading_dataset ({cols_str}) VALUES ({placeholders}) ON CONFLICT({conflict_keys}) DO UPDATE SET {update_str}"
                 conn.executemany(sql_ml, [tuple(r.values()) for r in ml_records])
 
-                # 2. strategy_optimization 요약 통계 계산 및 저장 (표준 CamelCase 반영)
+                # 2. strategy_optimization 통계 저장
                 summary = df_all.groupby(['positionMode', 'leverage', 'marginRatio']).agg(
                     totalTrades=('realizedPnl', 'count'),
                     winTrades=('realizedPnl', lambda x: (x > 0).sum()),

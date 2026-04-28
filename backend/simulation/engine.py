@@ -16,37 +16,56 @@ class SimulationEngine:
         else:
             return entry_price * (Decimal('1') + (Decimal('1') / lev) - self.mmr)
 
-    def open_position(self, wallet: Wallet, symbol: str, side: PositionSide, entry_price: Decimal, leverage: int, margin_ratio: Decimal, sl_price: Optional[Decimal] = None, sl_type: Optional[str] = None, equilibrium: Optional[Decimal] = None, entry_rule: str = "RULE_1_VWMA"):
-        """신규 진입을 수행합니다. (중복 진입 방지 적용)"""
+    def open_position(self, wallet: Wallet, symbol: str, side: PositionSide, entry_price: Decimal, 
+                    leverage: int, margin_ratio: Decimal, sl_price: Optional[Decimal] = None, 
+                    sl_type: Optional[str] = None, equilibrium: Optional[Decimal] = None, 
+                    entry_rule: str = "entryVwma", tag: str = ""):
+        """
+        신규 진입 및 추가 분할 진입(Scaling-in)을 통합 관리합니다.
+        """
         pos_key = symbol if wallet.position_mode == PositionMode.ONE_WAY else f"{symbol}_{side.value}"
-
-        # 🚀 [핵심 수정] 3번 연속 진입하는 폭주를 막기 위해, 이미 해당 방향의 포지션이 열려있다면 추가 진입을 무시합니다.
-        if pos_key in wallet.positions:
-            return {"status": "IGNORED_ALREADY_OPEN", "entry_price": wallet.positions[pos_key].entry_price}
-
-        actual_margin = wallet.available_balance * margin_ratio 
+        
         actual_entry = entry_price * (Decimal('1') + self.slippage_rate) if side == PositionSide.LONG else entry_price * (Decimal('1') - self.slippage_rate)
+        actual_margin = wallet.available_balance * margin_ratio 
         new_size = (actual_margin * Decimal(str(leverage))) / actual_entry
-        liq_price = self.calculate_liq_price(side, actual_entry, leverage)
 
-        # 바뀐 models.py의 필드명에 맞추어 포지션 객체 생성
+        # 스마트 블로킹 로직
+        if pos_key in wallet.positions:
+            pos = wallet.positions[pos_key]
+            
+            # 1. 이미 같은 기준선(태그)으로 들어왔다면 진입 차단 (폭주 방지)
+            if tag in pos.entry_tags:
+                return {"status": "SKIPPED_ALREADY_TAGGED", "tag": tag}
+            
+            # 2. 새로운 기준선(태그)이라면 '불타기(Scaling-in)' 실행
+            # 새로운 평단가 계산 (가중 평균)
+            total_size = pos.size + new_size
+            pos.entry_price = ((pos.size * pos.entry_price) + (new_size * actual_entry)) / total_size
+            pos.size = total_size
+            pos.isolated_margin += actual_margin
+            
+            # 진입 기록 추가
+            if tag: pos.entry_tags.append(tag)
+            
+            # 평단이 바뀌었으므로 청산가 재계산
+            pos.liquidation_price = self.calculate_liq_price(pos.side, pos.entry_price, pos.leverage)
+            wallet.sync()
+            return {"status": f"LADDER_MERGED_{tag}", "entry_price": pos.entry_price}
+
+        # 3. 포지션이 아예 없는 경우 (최초 신규 진입)
         new_pos = Position(
-            symbol=symbol, 
-            side=side, 
-            leverage=leverage, 
-            entry_price=actual_entry,
-            size=new_size, 
-            isolated_margin=actual_margin, 
-            liquidation_price=liq_price,
-            stop_loss_price=sl_price, 
-            sl_type=sl_type,
-            entry_equilibrium=equilibrium,
-            entry_rule=entry_rule
+            symbol=symbol, side=side, leverage=leverage, entry_price=actual_entry,
+            size=new_size, isolated_margin=actual_margin, 
+            liquidation_price=self.calculate_liq_price(side, actual_entry, leverage),
+            stop_loss_price=sl_price, sl_type=sl_type,
+            entry_equilibrium=equilibrium, entry_rule=entry_rule,
+            allocated_unit_margin_ratio=margin_ratio # 다음 분할 진입 시 사용할 비중 저장
         )
+        if tag: new_pos.entry_tags.append(tag)
         
         wallet.positions[pos_key] = new_pos
-        wallet.sync() # 모델 변경 반영 (sync_balances -> sync)
-        return {"status": "NEW", "entry_price": actual_entry}
+        wallet.sync()
+        return {"status": "NEW_ENTRY", "entry_price": actual_entry}
 
     def check_triggers(self, wallet: Wallet, current_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """시뮬전략.txt의 지표 기반 익절/손절/청산 로직을 체크합니다."""
