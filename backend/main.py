@@ -179,14 +179,10 @@ async def lifespan(app: FastAPI):
     print("="*60 + "\n")
 
     loop = asyncio.get_running_loop()
-    # 기존에 있던 백그라운드 초기 데이터 백필 로직은 유지
-    print("[SYSTEM] 초기 마켓 데이터 백필 엔진 예열 중...")
-    loop.run_in_executor(None, preload_initial_market_data)
-    # 딜레이로 실시간과 과거 데이터 분리
-    delay_seconds = 5 
-    print(f"[SYSTEM] 백필 엔진 가동 확인. {delay_seconds}초 후 실시간 워커를 연결합니다...")
-    await asyncio.sleep(delay_seconds)
-    # 실시간 데이터 워커도 유지
+    print("[SYSTEM] 초기 마켓 데이터 백필 엔진 가동 중...")
+    await loop.run_in_executor(None, preload_initial_market_data)
+    print("[SYSTEM] 백필 완료! 데이터 연속성을 확보했습니다.")
+
     print("[SYSTEM] 실시간 데이터 동기화 워커 가동 시작.")
     sync_task = asyncio.create_task(continuous_data_sync_worker())
 
