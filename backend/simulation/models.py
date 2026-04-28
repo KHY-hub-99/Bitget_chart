@@ -26,6 +26,7 @@ class Position(BaseModel):
     mark_price: Decimal = Field(default=Decimal('0.0'), description="현재 시장가")
     isolated_margin: Decimal = Field(default=Decimal('0.0'), description="투입된 총 격리 증거금")
     liquidation_price: Decimal = Field(default=Decimal('0.0'), description="강제 청산 가격")
+    position_mode: PositionMode = Field(default=PositionMode.ONE_WAY, description="포지션 모드 (ONE_WAY 또는 HEDGE)")
     
     # [분할 진입 상태 추적 - n분할 핵심]
     entry_tags: List[str] = Field(
@@ -91,6 +92,7 @@ class Wallet(BaseModel):
     available_balance: Decimal = Field(default=Decimal('10000.0'), description="주문 가능 잔액")
     frozen_margin: Decimal = Field(default=Decimal('0.0'), description="현재 포지션들에 묶인 총 격리 증거금")
     
+    position_mode: PositionMode = Field(default=PositionMode.ONE_WAY)
     positions: Dict[str, Position] = Field(default_factory=dict, description="활성화된 포지션 목록")
 
     @property

@@ -3,23 +3,24 @@ import {
   createChart,
   ColorType,
   CrosshairMode,
-  CandlestickSeries,
-  HistogramSeries,
-  LineSeries,
-  AreaSeries,
   LineStyle,
+  CandlestickSeries,
+  LineSeries,
+  HistogramSeries,
   createSeriesMarkers,
   IChartApi,
-  IPriceLine,
+  ISeriesApi,
+  SeriesMarker,
+  Time,
 } from "lightweight-charts";
 
-// 🎯 [추가] App.tsx에서 변경된 카테고리에 맞춰 settings 타입 업데이트
+// --- [1. 타입 정의] ---
 interface ChartDataProps {
   data: {
     candles: any[];
     volumes: any[];
-    indicators: { [key: string]: any[] };
-    markers?: any[]; // 백엔드에서 생성해서 주는 마커 데이터 (선택)
+    indicators: { [key: string]: { time: number; value: number }[] };
+    markers: any[];
   };
   settings: {
     ichimoku: boolean;
@@ -29,7 +30,7 @@ interface ChartDataProps {
     rsi: boolean;
     mfi: boolean;
     macd: boolean;
-    signals: boolean; // 시그널 마커 토글
+    signals: boolean;
   };
   symbol: string;
   activePositions?: any[];
@@ -42,44 +43,17 @@ const TradingChart: React.FC<ChartDataProps> = ({
   activePositions,
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const legendRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRefs = useRef<{ [key: string]: any }>({});
-  const priceLinesRef = useRef<IPriceLine[]>([]);
+  const seriesRefs = useRef<{ [key: string]: ISeriesApi<any> }>({});
+  const markersPluginRef = useRef<any>(null);
+  const priceLinesRef = useRef<any[]>([]);
 
-  const settingsRef = useRef(settings);
-  const symbolRef = useRef(symbol);
-
-  useEffect(() => {
-    settingsRef.current = settings;
-  }, [settings]);
-
-  useEffect(() => {
-    symbolRef.current = symbol;
-  }, [symbol]);
-
-  const processData = (items: any[], isCandle = false) => {
-    if (!items || !Array.isArray(items)) return [];
-    const uniqueMap = new Map();
-
-    items.forEach((item) => {
-      if (!item || !item.time) return;
-      if (!isCandle) {
-        if (
-          item.value === null ||
-          item.value === undefined ||
-          isNaN(item.value)
-        ) {
-          return;
-        }
-      }
-      uniqueMap.set(item.time, item);
-    });
-
-    return Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+  // 🕒 KST 포맷팅
+  const formatKst = (timestamp: number) => {
+    const date = new Date(timestamp * 1000);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
   };
 
-  // --- [차트 초기화 useEffect] ---
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -87,469 +61,249 @@ const TradingChart: React.FC<ChartDataProps> = ({
       layout: {
         background: { type: ColorType.Solid, color: "#0b0e11" },
         textColor: "#929aa5",
-        fontSize: 12,
-        fontFamily: "'Inter', sans-serif",
-      },
-      localization: {
-        locale: "ko-KR",
-        timeFormatter: (timestamp: number) => {
-          const d = new Date(timestamp * 1000);
-          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-        },
       },
       grid: {
         vertLines: { visible: false },
-        horzLines: { visible: false },
+        horzLines: { color: "rgba(42, 46, 57, 0.1)" },
       },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: {
-          color: "#758696",
-          width: 1,
-          style: LineStyle.Solid, // 👈 십자선도 실선으로!
-        },
-        horzLine: {
-          color: "#758696",
-          width: 1,
-          style: LineStyle.Solid, // 👈 십자선도 실선으로!
-        },
-      },
-      timeScale: {
-        borderColor: "rgba(197, 203, 206, 0.2)",
-        timeVisible: true,
-        secondsVisible: false,
-        barSpacing: 12,
-        rightOffset: 30,
-        shiftVisibleRangeOnNewBar: true,
-      },
+      crosshair: { mode: CrosshairMode.Normal },
+      timeScale: { timeVisible: true, borderVisible: false, rightOffset: 100 },
+      localization: { timeFormatter: (t: number) => formatKst(t) },
       width: chartContainerRef.current.clientWidth,
       height: 650,
     });
 
-    const s: any = {};
+    const s: { [key: string]: ISeriesApi<any> } = {};
 
-    // 1. 메인 캔들
     s.candle = chart.addSeries(CandlestickSeries, {
       upColor: "#2ebd85",
       downColor: "#f6465d",
       borderVisible: false,
-      wickUpColor: "#2ebd85",
-      wickDownColor: "#f6465d",
     });
-
-    // 🎯 [추가] 마커 플러그인 생성
-    s.markersPlugin = createSeriesMarkers(s.candle);
-
-    // 2. Whale 세력선 (흰색/회색 선)
-    s.vwma224 = chart.addSeries(LineSeries, { color: "#ffffff", lineWidth: 3 });
-    s.sma224 = chart.addSeries(LineSeries, { color: "#9e9e9e", lineWidth: 1 });
-
-    // --- [SMC 시각화: 선 + 박스권(Zone) 추가] ---
-
-    // 1-1. SMC 고점 저항선 (빨강 실선)
-    s.swingHighLevel = chart.addSeries(LineSeries, {
-      color: "rgba(246, 70, 93, 0.6)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-    });
-    // 1-2. 🔴 숏 진입 존 (Short Entry Zone)
-    // 선 아래로 은은하게 색을 채워 "진입 구역"임을 표시합니다.
-    s.swingHighZone = chart.addSeries(AreaSeries, {
-      topColor: "rgba(246, 70, 93, 0.25)", // 선에 가까운 쪽은 진하게
-      bottomColor: "rgba(246, 70, 93, 0.02)", // 아래로 갈수록 투명하게
-      lineColor: "transparent", // 테두리 선은 없음
-      lineWidth: 0,
-      priceLineVisible: false,
-    });
-
-    // 2-1. SMC 저점 지지선 (파랑 실선)
-    s.swingLowLevel = chart.addSeries(LineSeries, {
-      color: "rgba(41, 98, 255, 0.6)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-    });
-    // 2-2. 🔵 롱 진입 존 (Long Entry Zone)
-    // 선 위로 은은하게 색을 채워 "진입 구역"임을 표시합니다.
-    s.swingLowZone = chart.addSeries(AreaSeries, {
-      topColor: "rgba(41, 98, 255, 0.02)", // 위로 갈수록 투명하게
-      bottomColor: "rgba(41, 98, 255, 0.25)", // 선에 가까운 쪽은 진하게
-      lineColor: "transparent",
-      lineWidth: 0,
-      priceLineVisible: false,
-    });
-
-    // 3-1. SMC 중심선 (노랑 실선)
-    s.equilibrium = chart.addSeries(LineSeries, {
-      color: "rgba(240, 185, 11, 0.5)", // 투명도를 살짝 조절
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-    });
-    s.equilibriumZone = chart.addSeries(AreaSeries, {
-      topColor: "rgba(240, 185, 11, 0.15)", // 상단 연한 노랑
-      bottomColor: "rgba(240, 185, 11, 0.01)", // 아래로 갈수록 투명하게
-      lineColor: "transparent",
-      lineWidth: 0,
-      priceLineVisible: false,
-    });
-
-    // 4. 일목균형표
-    s.tenkan = chart.addSeries(LineSeries, { color: "#f0b90b", lineWidth: 1 });
-    s.kijun = chart.addSeries(LineSeries, { color: "#ff9800", lineWidth: 2 });
-    s.senkouA = chart.addSeries(LineSeries, {
-      color: "rgba(46, 189, 133, 0.4)",
-      lineWidth: 1,
-    });
-    s.senkouB = chart.addSeries(LineSeries, {
-      color: "rgba(246, 70, 93, 0.4)",
-      lineWidth: 1,
-    });
-    s.cloud = chart.addSeries(AreaSeries, {
-      lineColor: "transparent",
-      topColor: "rgba(46, 189, 133, 0.25)",
-      bottomColor: "rgba(11, 14, 17, 0)",
-      lineWidth: 0,
-      priceLineVisible: false,
-    });
-
-    // 5. 볼린저 밴드
-    s.bbUpper = chart.addSeries(LineSeries, {
-      color: "rgba(33, 150, 243, 0.4)",
-      lineStyle: LineStyle.Dashed,
-      lineWidth: 1,
-    });
-    s.bbMid = chart.addSeries(LineSeries, {
-      color: "rgba(158, 158, 158, 0.2)",
-      lineStyle: LineStyle.Dotted,
-      lineWidth: 1,
-    });
-    s.bbLower = chart.addSeries(LineSeries, {
-      color: "rgba(33, 150, 243, 0.4)",
-      lineStyle: LineStyle.Dashed,
-      lineWidth: 1,
-    });
-
-    // 6. 하단 보조지표 (RSI, MFI, MACD, Volume)
-    s.rsi = chart.addSeries(LineSeries, {
-      color: "#9c27b0",
-      lineWidth: 2,
-      priceScaleId: "rsi_p",
-    });
-    s.mfi = chart.addSeries(LineSeries, {
-      color: "#00bcd4",
-      lineWidth: 2,
-      priceScaleId: "rsi_p",
-    });
-    s.macdLine = chart.addSeries(LineSeries, {
-      color: "#2962FF",
-      lineWidth: 1.5,
-      priceScaleId: "macd_p",
-    });
-    s.signalLine = chart.addSeries(LineSeries, {
-      color: "#ff9800",
-      lineWidth: 1.5,
-      priceScaleId: "macd_p",
-    });
-
     s.volume = chart.addSeries(HistogramSeries, {
       color: "rgba(146, 154, 165, 0.2)",
       priceFormat: { type: "volume" },
-      priceScaleId: "vol_p",
+      priceScaleId: "vol",
     });
 
-    // 7. 차트 스케일 조정
-    chart.priceScale("right").applyOptions({
-      autoScale: true,
-      scaleMargins: { top: 0.1, bottom: 0.2 },
+    s.vwma224 = chart.addSeries(LineSeries, {
+      color: "#ffffff",
+      lineWidth: 3,
+      title: "VWMA 224",
+    });
+    s.sma224 = chart.addSeries(LineSeries, {
+      color: "#929aa5",
+      lineWidth: 1,
+      title: "SMA 224",
+    });
+
+    // 🚀 SMC 기준 변경: SwingHigh(상단), TrailingBottom(하단), Equilibrium(평균)
+    s.swingHighLevel = chart.addSeries(LineSeries, {
+      color: "#f6465d",
+      lineWidth: 2,
+      lineStyle: LineStyle.Dashed,
+    });
+    s.trailingBottom = chart.addSeries(LineSeries, {
+      color: "#2ebd85",
+      lineWidth: 2,
+      lineStyle: LineStyle.Dashed,
+    });
+    s.equilibrium = chart.addSeries(LineSeries, {
+      color: "#f0b90b",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+    });
+
+    s.trailingTop = chart.addSeries(LineSeries, {
+      color: "rgba(246, 70, 93, 0.4)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+    });
+
+    s.tenkan = chart.addSeries(LineSeries, {
+      color: "#05f1ff",
+      lineWidth: 1,
+      title: "Tenkan",
+    });
+    s.kijun = chart.addSeries(LineSeries, {
+      color: "#ff3a3a",
+      lineWidth: 1,
+      title: "Kijun",
+    });
+    s.senkouA = chart.addSeries(LineSeries, {
+      color: "rgba(38, 166, 154, 0.4)",
+      lineWidth: 1,
+      title: "Senkou A",
+    });
+    s.senkouB = chart.addSeries(LineSeries, {
+      color: "rgba(239, 83, 80, 0.4)",
+      lineWidth: 1,
+      title: "Senkou B",
+    });
+
+    s.rsi = chart.addSeries(LineSeries, {
+      color: "#9c27b0",
+      lineWidth: 1,
+      priceScaleId: "rsi",
     });
     chart
-      .priceScale("rsi_p")
-      .applyOptions({ scaleMargins: { top: 0.65, bottom: 0.2 } });
+      .priceScale("rsi")
+      .applyOptions({ scaleMargins: { top: 0.75, bottom: 0.05 } });
     chart
-      .priceScale("macd_p")
-      .applyOptions({ scaleMargins: { top: 0.82, bottom: 0.08 } });
-    chart
-      .priceScale("vol_p")
-      .applyOptions({ scaleMargins: { top: 0.93, bottom: 0 } });
+      .priceScale("vol")
+      .applyOptions({ scaleMargins: { top: 0.9, bottom: 0 } });
 
-    seriesRefs.current = s;
     chartRef.current = chart;
+    seriesRefs.current = s;
+    return () => chart.remove();
+  }, [symbol]);
 
-    // --- [레전드 (Tooltip) 로직] ---
-    chart.subscribeCrosshairMove((param) => {
-      if (!legendRef.current) return;
-      const s = seriesRefs.current;
-      const candle = param.seriesData.get(s.candle) as any;
-      if (!candle || !param.time) return;
-
-      const color = candle.close >= candle.open ? "#2ebd85" : "#f6465d";
-      const formatVol = (val: number) => {
-        if (val >= 1000000) return (val / 1000000).toFixed(2) + "M";
-        if (val >= 1000) return (val / 1000).toFixed(2) + "K";
-        return val.toFixed(1);
-      };
-
-      const vwmaV = param.seriesData.get(s.vwma224) as any;
-      const rsiV = param.seriesData.get(s.rsi) as any;
-      const eqV = param.seriesData.get(s.equilibrium) as any;
-      const volV = param.seriesData.get(s.volume) as any;
-
-      legendRef.current.innerHTML = `
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-          <span style="color: #fff; font-size: 14px; font-weight: 800; letter-spacing: -0.02em;">${symbolRef.current}</span>
-        </div>
-        <div style="display: flex; gap: 16px; margin-bottom: 14px; font-size: 13px;">
-          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700;">CLOSE</span><span style="color: ${color}; font-weight: 700;">${candle.close.toLocaleString()}</span></div>
-          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700;">VOL</span><span style="color: #e6e8ea;">${volV?.value !== undefined ? formatVol(volV.value) : "0.0"}</span></div>
-        </div>
-        <div style="display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
-          ${settingsRef.current.whale && vwmaV?.value !== undefined ? `<div style="background: rgba(255, 255, 255, 0.08); padding: 4px 10px; border-radius: 4px;"><span style="color: #fff; font-size: 9px; font-weight: 900;">VWMA224</span> <span style="color: #fff; font-size: 11px;">${vwmaV.value.toFixed(1)}</span></div>` : ""}
-          ${settingsRef.current.smc && eqV?.value !== undefined ? `<div style="background: rgba(240, 185, 11, 0.08); padding: 4px 10px; border-radius: 4px;"><span style="color: #f0b90b; font-size: 9px; font-weight: 900;">SMC EQ</span> <span style="color: #f0b90b; font-size: 11px;">${eqV.value.toFixed(1)}</span></div>` : ""}
-          ${settingsRef.current.rsi && rsiV?.value !== undefined ? `<div style="background: rgba(156, 39, 176, 0.08); padding: 4px 10px; border-radius: 4px;"><span style="color: #9c27b0; font-size: 9px; font-weight: 900;">RSI</span> <span style="color: #9c27b0; font-size: 11px;">${rsiV.value.toFixed(2)}</span></div>` : ""}
-        </div>
-      `;
-    });
-
-    const handleResize = () =>
-      chart.applyOptions({ width: chartContainerRef.current!.clientWidth });
-    window.addEventListener("resize", handleResize);
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      chart.remove();
-    };
-  }, []);
-
-  // --- [데이터 및 시그널 마커 렌더링 useEffect] ---
+  // --- [데이터 및 로직 연산] ---
   useEffect(() => {
-    if (!chartRef.current || !data) return;
     const s = seriesRefs.current;
-    if (!s.candle) return;
+    if (!data || !s.candle) return;
 
-    // 1. 캔들 및 거래량 세팅
-    const finalCandles = processData(data.candles, true);
-    s.candle.setData(finalCandles);
-    const finalVols = processData(data.volumes);
-    s.volume.setData(
-      finalVols.map((v) => {
-        const c = finalCandles.find((cand) => cand.time === v.time);
-        return {
-          ...v,
-          color:
-            c && c.close >= c.open
-              ? "rgba(46, 189, 133, 0.25)"
-              : "rgba(246, 70, 93, 0.25)",
-        };
-      }),
-    );
+    s.candle.setData(data.candles || []);
+    s.volume.setData(data.volumes || []);
 
-    // 2. Standard CamelCase에 따른 지표 데이터 세팅
     if (data.indicators) {
-      const ind = data.indicators;
-      if (ind.vwma224) s.vwma224.setData(processData(ind.vwma224));
-      if (ind.sma224) s.sma224.setData(processData(ind.sma224));
-
-      if (ind.swingHighLevel) {
-        const highData = processData(ind.swingHighLevel);
-        s.swingHighLevel.setData(highData);
-        s.swingHighZone.setData(highData); // 👈 영역에도 동일한 데이터 주입
-      }
-      if (ind.swingLowLevel) {
-        const lowData = processData(ind.swingLowLevel);
-        s.swingLowLevel.setData(lowData);
-        s.swingLowZone.setData(lowData); // 👈 영역에도 동일한 데이터 주입
-      }
-      if (ind.equilibrium) {
-        const eqData = processData(ind.equilibrium);
-        s.equilibrium.setData(eqData);
-        s.equilibriumZone.setData(eqData); // 👈 영역에도 동일한 데이터 주입
-      }
-
-      if (ind.tenkan) s.tenkan.setData(processData(ind.tenkan));
-      if (ind.kijun) s.kijun.setData(processData(ind.kijun));
-      if (ind.senkouA) {
-        const sa = processData(ind.senkouA);
-        s.senkouA.setData(sa);
-        s.cloud.setData(sa);
-      }
-      if (ind.senkouB) s.senkouB.setData(processData(ind.senkouB));
-
-      if (ind.bbUpper) s.bbUpper.setData(processData(ind.bbUpper));
-      if (ind.bbMid) s.bbMid.setData(processData(ind.bbMid));
-      if (ind.bbLower) s.bbLower.setData(processData(ind.bbLower));
-
-      if (ind.rsi) s.rsi.setData(processData(ind.rsi));
-      if (ind.mfi) s.mfi.setData(processData(ind.mfi));
-      if (ind.macdLine) s.macdLine.setData(processData(ind.macdLine));
-      if (ind.signalLine) s.signalLine.setData(processData(ind.signalLine));
-    }
-
-    // 3. 🎯 시그널 자동 파싱 및 마커 생성 로직 (시뮬전략.txt 기반)
-    if (s.markersPlugin && settings.signals) {
-      let combinedMarkers: any[] = data.markers
-        ? processData(data.markers, true)
-        : [];
-
-      // 백엔드에서 캔들 객체 내부에 플래그(1 or 0)를 넣어 보냈을 경우 이를 추적하여 마커 자동 생성
-      finalCandles.forEach((c: any) => {
-        // [Long 진입 규칙] SMC Strong Low 기반 파란 박스권 매수
-        if (c.entrySmcLong === 1 || c.entrySmcLong === true) {
-          combinedMarkers.push({
-            time: c.time,
-            position: "belowBar",
-            color: "#2962FF",
-            shape: "arrowUp",
-            text: "Long Entry",
-          });
-        }
-        // [Short 진입 규칙] SMC Strong High 기반 빨간 박스권 매도
-        if (c.entrySmcShort === 1 || c.entrySmcShort === true) {
-          combinedMarkers.push({
-            time: c.time,
-            position: "aboveBar",
-            color: "#f6465d",
-            shape: "arrowDown",
-            text: "Short Entry",
-          });
-        }
-        // [Short 익절] TOP (초록 다이아몬드 대체 -> 초록 화살표/마커)
-        if (c.TOP === 1 || c.TOP === true) {
-          combinedMarkers.push({
-            time: c.time,
-            position: "aboveBar",
-            color: "#2ebd85",
-            shape: "arrowDown",
-            text: "TP (Short)",
-          });
-        }
-        // [Long 익절] BOTTOM (빨간 다이아몬드 대체 -> 빨간 화살표/마커)
-        if (c.BOTTOM === 1 || c.BOTTOM === true) {
-          combinedMarkers.push({
-            time: c.time,
-            position: "belowBar",
-            color: "#f6465d",
-            shape: "arrowUp",
-            text: "TP (Long)",
-          });
+      // 1. 일반 지표 주입 (equilibrium 및 기존 swingLowLevel 제외)
+      Object.entries(data.indicators).forEach(([key, values]) => {
+        if (
+          key !== "equilibrium" &&
+          key !== "swingLowLevel" &&
+          s[key] &&
+          values
+        ) {
+          s[key].setData(values);
         }
       });
 
-      // 중복 제거 후 세팅
-      const uniqueMarkers = Array.from(
-        new Map(
-          combinedMarkers.map((m) => [`${m.time}-${m.text}`, m]),
-        ).values(),
-      );
-      s.markersPlugin.setMarkers(uniqueMarkers.sort((a, b) => a.time - b.time));
-    } else if (s.markersPlugin) {
-      s.markersPlugin.setMarkers([]); // 시그널 토글 OFF 시 초기화
+      // 2. 🚀 새로운 Equilibrium 계산: (swingHighLevel + trailingBottom) / 2
+      const highData = data.indicators.swingHighLevel || [];
+      const bottomData = data.indicators.trailingBottom || [];
+
+      if (highData.length > 0 && bottomData.length > 0) {
+        // 시간(time)을 기준으로 맵핑하기 위해 Map 생성
+        const bottomMap = new Map(bottomData.map((d) => [d.time, d.value]));
+
+        const newEquilibrium = highData
+          .filter((h) => bottomMap.has(h.time))
+          .map((h) => ({
+            time: h.time,
+            value: (h.value + bottomMap.get(h.time)!) / 2, // 상단과 하단의 평균값 계산
+          }));
+
+        if (newEquilibrium.length > 0) {
+          s.equilibrium.setData(newEquilibrium);
+        }
+      } else if (data.indicators.equilibrium) {
+        // 백업용 기존 데이터
+        s.equilibrium.setData(data.indicators.equilibrium);
+      }
     }
 
-    // 4. 레이어 토글 가시성 적용
-    Object.keys(settings).forEach((key) => {
-      const isVisible = (settings as any)[key];
-      if (key === "ichimoku") {
-        ["tenkan", "kijun", "senkouA", "senkouB", "cloud"].forEach((k) =>
-          s[k]?.applyOptions({ visible: isVisible }),
-        );
-      } else if (key === "whale") {
-        ["vwma224", "sma224"].forEach((k) =>
-          s[k]?.applyOptions({ visible: isVisible }),
-        );
-      } else if (key === "smc") {
-        [
-          "swingHighLevel",
-          "swingLowLevel",
-          "swingHighZone",
-          "swingLowZone",
-          "equilibrium",
-          "equilibriumZone", // 👈 equilibriumZone 추가
-        ].forEach((k) => s[k]?.applyOptions({ visible: isVisible }));
-      } else if (key === "bollinger") {
-        ["bbUpper", "bbMid", "bbLower"].forEach((k) =>
-          s[k]?.applyOptions({ visible: isVisible }),
-        );
-      } else if (key === "macd") {
-        ["macdLine", "signalLine"].forEach((k) =>
-          s[k]?.applyOptions({ visible: isVisible }),
-        );
-      } else if (s[key]) {
-        s[key].applyOptions({ visible: isVisible });
-      }
-    });
+    if (markersPluginRef.current) {
+      try {
+        s.candle.detachPrimitive(markersPluginRef.current);
+      } catch (e) {}
+    }
+    if (settings.signals && data.markers) {
+      const sorted = [...data.markers].sort((a, b) => a.time - b.time);
+      markersPluginRef.current = createSeriesMarkers(
+        s.candle,
+        sorted.map((m) => ({
+          ...m,
+          shape: m.shape === "diamond" ? "square" : m.shape,
+        })),
+      );
+    }
+
+    // 가시성 제어 (불필요한 swingLowLevel은 토글에서 제거)
+    s.vwma224.applyOptions({ visible: settings.whale });
+    s.sma224.applyOptions({ visible: settings.whale });
+    ["swingHighLevel", "trailingBottom", "equilibrium", "trailingTop"].forEach(
+      (k) => {
+        if (s[k]) s[k].applyOptions({ visible: settings.smc });
+      },
+    );
+    ["tenkan", "kijun", "senkouA", "senkouB"].forEach((k) =>
+      s[k]?.applyOptions({ visible: settings.ichimoku }),
+    );
+    s.rsi.applyOptions({ visible: settings.rsi });
   }, [data, settings]);
 
-  // --- [포지션 Price Line 렌더링 useEffect] ---
+  // --- [실시간 포지션 및 Trailing 라벨] ---
   useEffect(() => {
     const s = seriesRefs.current;
-    if (!s || !s.candle) return;
+    if (!s.candle || !data) return;
 
-    priceLinesRef.current.forEach((line) => {
-      s.candle.removePriceLine(line);
-    });
+    priceLinesRef.current.forEach((l) => s.candle.removePriceLine(l));
     priceLinesRef.current = [];
 
-    if (activePositions && activePositions.length > 0) {
+    if (activePositions) {
       activePositions.forEach((pos) => {
-        if (pos.entry_price <= 0) return;
-        const isLong = pos.side === "LONG";
-        const sideColor = isLong ? "#2ebd85" : "#f6465d";
-
-        const entryLine = s.candle.createPriceLine({
-          price: pos.entry_price,
-          color: sideColor,
+        const entry = s.candle.createPriceLine({
+          price: pos.entry_price || pos.entryPrice,
+          color: pos.side === "LONG" ? "#2196F3" : "#f6465d",
           lineWidth: 2,
-          lineStyle: LineStyle.Solid,
+          title: `ENTRY (${pos.side})`,
           axisLabelVisible: true,
-          title: `${pos.side} ENTRY`,
         });
-        priceLinesRef.current.push(entryLine);
-
-        if (pos.liquidation_price > 0) {
-          const liqLine = s.candle.createPriceLine({
-            price: pos.liquidation_price,
-            color: "#ff9800",
-            lineWidth: 2,
-            lineStyle: LineStyle.Solid,
-            axisLabelVisible: true,
-            title: `LIQ`,
-          });
-          priceLinesRef.current.push(liqLine);
-        }
+        const sl = s.candle.createPriceLine({
+          price: pos.stop_loss_price || pos.slPrice,
+          color: "#ff9800",
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          title: "SL (POS)",
+          axisLabelVisible: true,
+        });
+        priceLinesRef.current.push(entry, sl);
       });
     }
-  }, [activePositions]);
+
+    if (data.indicators) {
+      // SMC 상단 (swingHighLevel 기준)
+      if (data.indicators.swingHighLevel?.length > 0) {
+        const lastTop =
+          data.indicators.swingHighLevel[
+            data.indicators.swingHighLevel.length - 1
+          ];
+        const topLine = s.candle.createPriceLine({
+          price: lastTop.value,
+          color: "#f6465d",
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          title: "SMC High",
+          axisLabelVisible: true,
+        });
+        priceLinesRef.current.push(topLine);
+      }
+
+      // SMC 하단 (trailingBottom 기준)
+      if (data.indicators.trailingBottom?.length > 0) {
+        const lastBottom =
+          data.indicators.trailingBottom[
+            data.indicators.trailingBottom.length - 1
+          ];
+        const bottomLine = s.candle.createPriceLine({
+          price: lastBottom.value,
+          color: "#2ebd85",
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          title: "SMC Low (Trailing)",
+          axisLabelVisible: true,
+        });
+        priceLinesRef.current.push(bottomLine);
+      }
+    }
+  }, [activePositions, data, symbol]);
 
   return (
     <div
-      style={{
-        position: "relative",
-        width: "100%",
-        height: "650px",
-        background: "#0b0e11",
-        borderRadius: "16px",
-        overflow: "hidden",
-        border: "1px solid #1e222d",
-      }}
-    >
-      <div
-        ref={legendRef}
-        style={{
-          position: "absolute",
-          top: 20,
-          left: 20,
-          zIndex: 10,
-          pointerEvents: "none",
-          fontFamily: "'Inter', sans-serif",
-          background: "rgba(11, 14, 17, 0.85)",
-          backdropFilter: "blur(12px)",
-          padding: "18px",
-          borderRadius: "14px",
-          border: "1px solid rgba(255, 255, 255, 0.08)",
-          boxShadow: "0 12px 48px rgba(0, 0, 0, 0.5)",
-          minWidth: "320px",
-        }}
-      />
-      <div ref={chartContainerRef} style={{ width: "100%", height: "100%" }} />
-    </div>
+      ref={chartContainerRef}
+      style={{ width: "100%", height: "650px", position: "relative" }}
+    />
   );
 };
 

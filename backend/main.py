@@ -25,7 +25,7 @@ base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 db_folder = os.path.join(base_dir, "backend", "market_data")
 db_path = os.path.join(db_folder, "crypto_dashboard.db")
 
-sim_wallet = Wallet(initial_balance=Decimal('10000.0'))
+sim_wallet = Wallet(initial_balance=Decimal('10000.0'), position_mode=PositionMode.ONE_WAY)
 sim_engine = SimulationEngine(fee_rate=Decimal('0.0005'), slippage_rate=Decimal('0.0002'))
 
 class OrderRequest(BaseModel):
@@ -195,7 +195,10 @@ app = FastAPI(title="Crypto Trading Dashboard API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=[
+        "http://localhost:5173",  # Vite 기본 주소
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -255,13 +258,17 @@ async def set_position_mode(req: ModeRequest):
     return {"message": f"모드가 {req.mode}로 변경되었습니다.", "mode": req.mode}
 
 @app.post("/api/simulation/reset")
+@app.post("/api/simulation/reset")
 async def reset_simulation():
     global sim_wallet
+    # 현재 모드를 기억했다가 초기화 시 다시 부여합니다.
+    current_mode = sim_wallet.position_mode 
     sim_wallet = Wallet(
         initial_balance=Decimal('10000.0'),
         total_balance=Decimal('10000.0'),
         available_balance=Decimal('10000.0'),
         frozen_margin=Decimal('0.0'),
+        position_mode=current_mode, # 모드 유지
         positions={}
     )
     return {"message": "시뮬레이션이 초기화되었습니다."}
