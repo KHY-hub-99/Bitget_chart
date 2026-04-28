@@ -100,6 +100,10 @@ class CryptoDataFeed:
                     entryVwmaLong INTEGER, entrySmcLong INTEGER, 
                     entryVwmaShort INTEGER, entrySmcShort INTEGER,
                     
+                    -- 추적 스윙 피처 추가
+                    entryTrend INTEGER, entryTrailingTop REAL, entryTrailingBottom REAL,
+                    entryTopType TEXT, entryBottomType TEXT,
+                    
                     -- 시뮬레이션 설정 파라미터
                     positionMode TEXT, leverage INTEGER, marginRatio REAL,
                     appliedSlRatio REAL, slTag TEXT, 
