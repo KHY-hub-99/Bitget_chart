@@ -127,12 +127,15 @@ class MasterIndicatorEngine:
         df['entryVwmaLong'] = is_above_confirm.shift(1) & (df['low'] <= df['vwma224']) & trend_long
         df['entryVwmaShort'] = is_below_confirm.shift(1) & (df['high'] >= df['vwma224']) & trend_short
         
+        df['entrySmaLong'] = is_above_confirm.shift(1) & (df['low'] <= df['sma224']) & trend_long
+        df['entrySmaShort'] = is_below_confirm.shift(1) & (df['high'] >= df['sma224']) & trend_short
+        
         tolerance = df['close'] * 0.002
         df['entrySmcLong'] = is_above_confirm.shift(1) & (df['low'] <= (df['swingLowLevel'] + tolerance)) & trend_long
         df['entrySmcShort'] = is_below_confirm.shift(1) & (df['high'] >= (df['swingHighLevel'] - tolerance)) & trend_short
 
-        df['longCondition'] = df['entryVwmaLong'] | df['entrySmcLong']
-        df['shortCondition'] = df['entryVwmaShort'] | df['entrySmcShort']
+        df['longCondition'] = df['entryVwmaLong'] | df['entrySmaLong'] | df['entrySmcLong']
+        df['shortCondition'] = df['entryVwmaShort'] | df['entrySmaShort'] | df['entrySmcShort']
 
         df['longSig'] = df['longCondition'] & ~df['longCondition'].shift(1, fill_value=False)
         df['shortSig'] = df['shortCondition'] & ~df['shortCondition'].shift(1, fill_value=False)

@@ -64,8 +64,10 @@
 **하이브리드 전략 세부 진입 규칙 (Rule 1 & Rule 2)**
 
 - `entryVwmaLong`
-- `entrySmcLong`
 - `entryVwmaShort`
+- `entrySmaLong`
+- `entrySmaShort`
+- `entrySmcLong`
 - `entrySmcShort`
 
 **매매 조건 및 최종 확정 시그널**

@@ -38,31 +38,29 @@ class CryptoDataFeed:
                 )
             """)
             
-            # [업데이트됨] 제공해주신 최신 표준 CamelCase 리스트로 컬럼 정의
+            # [최종본] Standard CamelCase 명세서에 따른 지표 컬럼 정의
             indicator_columns = [
-                # 일목균형표 및 구름대
-                ('tenkan', 'REAL'), ('kijun', 'REAL'), 
-                ('senkouA', 'REAL'), ('senkouB', 'REAL'),
-                ('cloudTop', 'REAL'), ('cloudBottom', 'REAL'),
+                # 일목균형표 (Ichimoku)
+                ('tenkan', 'REAL'), ('kijun', 'REAL'), ('senkouA', 'REAL'), 
+                ('senkouB', 'REAL'), ('cloudTop', 'REAL'), ('cloudBottom', 'REAL'),
                 # Whale 세력선 및 거래량
                 ('sma224', 'REAL'), ('vwma224', 'REAL'), ('volConfirm', 'INTEGER'),
-                # 기술적 지표
-                ('rsi', 'REAL'), ('mfi', 'REAL'),
-                ('macdLine', 'REAL'), ('signalLine', 'REAL'),
-                ('bbLower', 'REAL'), ('bbMid', 'REAL'), ('bbUpper', 'REAL'),
+                # 기술적 지표 (RSI, MFI, MACD, BB)
+                ('rsi', 'REAL'), ('mfi', 'REAL'), ('macdLine', 'REAL'), 
+                ('signalLine', 'REAL'), ('bbLower', 'REAL'), ('bbMid', 'REAL'), ('bbUpper', 'REAL'),
                 # SMC 구조 및 가격 레벨
                 ('swingHighLevel', 'REAL'), ('swingLowLevel', 'REAL'), ('equilibrium', 'REAL'),
-                # 추적 스윙 및 시장 추세 (NEW)
+                # 추적 스윙 및 시장 추세 (Trailing Extremes & Trend)
                 ('trend', 'INTEGER'), ('trailingTop', 'REAL'), ('trailingBottom', 'REAL'),
                 ('topType', 'TEXT'), ('bottomType', 'TEXT'),
                 # 역추세 세부 신호 및 최종 마커
                 ('bearishDiv', 'INTEGER'), ('bullishDiv', 'INTEGER'),
                 ('extremeTop', 'INTEGER'), ('extremeBottom', 'INTEGER'),
                 ('TOP', 'INTEGER'), ('BOTTOM', 'INTEGER'),
-                # 하이브리드 전략 세부 진입 규칙 (Rule 1 & Rule 2)
-                ('entryVwmaLong', 'INTEGER'), ('entrySmcLong', 'INTEGER'),
-                ('entryVwmaShort', 'INTEGER'), ('entrySmcShort', 'INTEGER'),
-                # 매매 조건 및 확정 시그널
+                # 하이브리드 전략 세부 진입 규칙 (Rule 1, 2, 3)
+                ('entryVwmaLong', 'INTEGER'), ('entrySmaLong', 'INTEGER'), ('entrySmcLong', 'INTEGER'),
+                ('entryVwmaShort', 'INTEGER'), ('entrySmaShort', 'INTEGER'), ('entrySmcShort', 'INTEGER'),
+                # 매매 조건 및 최종 확정 시그널
                 ('longCondition', 'INTEGER'), ('shortCondition', 'INTEGER'),
                 ('longSig', 'INTEGER'), ('shortSig', 'INTEGER')
             ]
@@ -77,7 +75,7 @@ class CryptoDataFeed:
                     except Exception as e:
                         print(f"[DEBUG] 컬럼 추가 중 오류 ({col_name}): {e}")
             
-            # 2. ML 데이터셋 테이블 생성 (학습용 상세 데이터)
+            # 2. ML 데이터셋 테이블 생성 (AI 학습용 상세 피처 포함)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ml_trading_dataset (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,17 +90,13 @@ class CryptoDataFeed:
                     entrySma224 REAL, entryVwma224 REAL, 
                     entrySwingHighLevel REAL, entrySwingLowLevel REAL, entryEquilibrium REAL,
                     
-                    -- 추적 스윙 피처 추가
+                    -- 추적 스윙 및 구조 피처 (중요!)
                     entryTrend INTEGER, entryTrailingTop REAL, entryTrailingBottom REAL,
                     entryTopType TEXT, entryBottomType TEXT,
 
-                    -- 진입 근거 및 규칙 (Rule 1 & Rule 2)
-                    entryVwmaLong INTEGER, entrySmcLong INTEGER, 
-                    entryVwmaShort INTEGER, entrySmcShort INTEGER,
-                    
-                    -- 추적 스윙 피처 추가
-                    entryTrend INTEGER, entryTrailingTop REAL, entryTrailingBottom REAL,
-                    entryTopType TEXT, entryBottomType TEXT,
+                    -- 진입 근거 및 규칙 (Rule 1, 2, 3)
+                    entryVwmaLong INTEGER, entrySmaLong INTEGER, entrySmcLong INTEGER, 
+                    entryVwmaShort INTEGER, entrySmaShort INTEGER, entrySmcShort INTEGER,
                     
                     -- 시뮬레이션 설정 파라미터
                     positionMode TEXT, leverage INTEGER, marginRatio REAL,
@@ -116,7 +110,7 @@ class CryptoDataFeed:
                 )
             ''')
 
-            # 3. 전략 최적화 최종 통계 테이블 생성 (백테스트 결과 요약)
+            # 3. 전략 최적화 최종 통계 테이블 생성
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS strategy_optimization (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -133,32 +127,37 @@ class CryptoDataFeed:
             conn.commit()
 
     def save_enriched_df(self, df_calc):
-        """지표가 계산된 데이터프레임을 DB에 저장합니다. (모든 표준 컬럼 반영)"""
+        """지표가 계산된 데이터프레임을 DB에 저장합니다. (Standard CamelCase 명세서 100% 반영)"""
         if df_calc.empty: return
         try:
             temp_df = df_calc.reset_index().copy()
             # 컬럼명을 문자열로 유지
             temp_df.columns = [str(c) for c in temp_df.columns]
             
+            # 시간 포맷 변환 (ms 단위)
             if 'time' in temp_df.columns:
-                temp_df['time'] = temp_df['time'].apply(lambda x: int(x.timestamp() * 1000) if isinstance(x, pd.Timestamp) else int(x))
+                temp_df['time'] = temp_df['time'].apply(
+                    lambda x: int(x.timestamp() * 1000) if isinstance(x, pd.Timestamp) else int(x)
+                )
                 
             temp_df['timeframe'] = self.timeframe
             
-            # [업데이트됨] 정수형/불리언 컬럼 리스트
+            # [업데이트] 정수(Integer)로 저장할 컬럼 리스트 - entrySma 추가됨
             int_cols = [
                 'volConfirm', 'trend',
                 'bearishDiv', 'bullishDiv', 'extremeTop', 'extremeBottom', 'TOP', 'BOTTOM',
-                'entryVwmaLong', 'entrySmcLong', 'entryVwmaShort', 'entrySmcShort',
+                'entryVwmaLong', 'entrySmaLong', 'entrySmcLong', 
+                'entryVwmaShort', 'entrySmaShort', 'entrySmcShort',
                 'longCondition', 'shortCondition', 'longSig', 'shortSig'
             ]
             for col in int_cols:
                 if col in temp_df.columns:
                     temp_df[col] = pd.to_numeric(temp_df[col], errors='coerce').fillna(0).astype(int)
             
+            # 무한대 값(inf) 처리
             temp_df = temp_df.replace([np.inf, -np.inf], np.nan)
             
-            # [업데이트됨] 저장할 전체 컬럼 리스트 (명세서 100% 일치)
+            # [최종본] DB에 저장할 전체 컬럼 순서 및 리스트
             db_cols = [
                 'time', 'timeframe', 'open', 'high', 'low', 'close', 'volume',
                 'tenkan', 'kijun', 'senkouA', 'senkouB', 'cloudTop', 'cloudBottom',
@@ -168,10 +167,12 @@ class CryptoDataFeed:
                 'swingHighLevel', 'swingLowLevel', 'equilibrium',
                 'trend', 'trailingTop', 'trailingBottom', 'topType', 'bottomType',
                 'bearishDiv', 'bullishDiv', 'extremeTop', 'extremeBottom', 'TOP', 'BOTTOM',
-                'entryVwmaLong', 'entrySmcLong', 'entryVwmaShort', 'entrySmcShort',
+                'entryVwmaLong', 'entrySmaLong', 'entrySmcLong', 
+                'entryVwmaShort', 'entrySmaShort', 'entrySmcShort',
                 'longCondition', 'shortCondition', 'longSig', 'shortSig'
             ]
             
+            # 존재하지 않는 컬럼은 None(NULL)으로 채움
             for col in db_cols:
                 if col not in temp_df.columns:
                     temp_df[col] = None
@@ -183,6 +184,8 @@ class CryptoDataFeed:
                 cursor = conn.cursor()
                 cols_str = ", ".join([f'"{c}"' for c in db_cols])
                 placeholders = ", ".join(["?"] * len(db_cols))
+                
+                # UPSERT를 위한 업데이트 컬럼 (PK인 time, timeframe 제외)
                 update_cols = [c for c in db_cols if c not in ['time', 'timeframe']]
                 update_str = ", ".join([f'"{c}"=excluded."{c}"' for c in update_cols])
                 
@@ -192,6 +195,7 @@ class CryptoDataFeed:
                 '''
                 cursor.executemany(sql, data_list)
                 conn.commit()
+                
         except Exception as e:
             print(f"DB 저장 에러: {e}")
 
