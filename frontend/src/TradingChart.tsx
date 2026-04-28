@@ -98,13 +98,21 @@ const TradingChart: React.FC<ChartDataProps> = ({
         },
       },
       grid: {
-        vertLines: { color: "rgba(42, 46, 57, 0.03)" },
-        horzLines: { color: "rgba(42, 46, 57, 0.03)" },
+        vertLines: { visible: false },
+        horzLines: { visible: false },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { labelBackgroundColor: "#2962FF" },
-        horzLine: { labelBackgroundColor: "#2962FF" },
+        vertLine: {
+          color: "#758696",
+          width: 1,
+          style: LineStyle.Solid, // 👈 십자선도 실선으로!
+        },
+        horzLine: {
+          color: "#758696",
+          width: 1,
+          style: LineStyle.Solid, // 👈 십자선도 실선으로!
+        },
       },
       timeScale: {
         borderColor: "rgba(197, 203, 206, 0.2)",
@@ -142,21 +150,25 @@ const TradingChart: React.FC<ChartDataProps> = ({
       lineWidth: 1,
     });
 
-    // 3. SMC 구조 라인
+    // 1. SMC 고점/저항선 (빨강)
     s.swingHighLevel = chart.addSeries(LineSeries, {
-      color: "rgba(246, 70, 93, 0.8)", // 숏 기준선 (빨강)
-      lineWidth: 2,
-      lineStyle: LineStyle.Dashed,
+      color: "rgba(246, 70, 93, 0.4)", // 투명도를 낮추면 더 깔끔합니다
+      lineWidth: 1, // 선 굵기를 1로 축소
+      lineStyle: LineStyle.Solid, // 👈 실선으로 변경
     });
+
+    // 2. SMC 저점/지지선 (파랑)
     s.swingLowLevel = chart.addSeries(LineSeries, {
-      color: "rgba(41, 98, 255, 0.8)", // 롱 기준선 (파랑)
-      lineWidth: 2,
-      lineStyle: LineStyle.Dashed,
-    });
-    s.equilibrium = chart.addSeries(LineSeries, {
-      color: "rgba(240, 185, 11, 0.8)", // 50% 익절 기준선 (노랑)
+      color: "rgba(41, 98, 255, 0.4)",
       lineWidth: 1,
-      lineStyle: LineStyle.Dotted,
+      lineStyle: LineStyle.Solid, // 👈 실선으로 변경
+    });
+
+    // 3. SMC 중심선 (노랑)
+    s.equilibrium = chart.addSeries(LineSeries, {
+      color: "rgba(240, 185, 11, 0.3)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid, // 👈 실선으로 변경
     });
 
     // 4. 일목균형표
@@ -449,7 +461,7 @@ const TradingChart: React.FC<ChartDataProps> = ({
           price: pos.entry_price,
           color: sideColor,
           lineWidth: 2,
-          lineStyle: LineStyle.Dashed,
+          lineStyle: LineStyle.Solid,
           axisLabelVisible: true,
           title: `${pos.side} ENTRY`,
         });
