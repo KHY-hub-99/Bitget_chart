@@ -142,7 +142,7 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     df['shortCondition'] = df['entryVwmaShort'] | df['entrySmcShort']
 
     # 최종 매매 신호 (Sig) - 조건 충족 시 첫 캔들에서만 발생
-    df['longSig'] = df['longCondition'] & ~df['longCondition'].shift(1).fillna(False)
-    df['shortSig'] = df['shortCondition'] & ~df['shortCondition'].shift(1).fillna(False)
+    df['longSig'] = df['longCondition'] & ~df['longCondition'].shift(1, fill_value=False)
+    df['shortSig'] = df['shortCondition'] & ~df['shortCondition'].shift(1, fill_value=False)
 
     return df
