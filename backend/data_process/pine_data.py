@@ -126,19 +126,19 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     trend_short = df['close'] < df['vwma224']
 
     # 4캔들 연속 VWMA 위/아래에 있었는지 확인
-    is_above = (df['low'] > df['vwma224']).rolling(window=4).min() == 1
-    is_below = (df['high'] < df['vwma224']).rolling(window=4).min() == 1
+    is_above_confirm = (df['low'] > df['vwma224']).rolling(window=4).min() == 1
+    is_below_confirm = (df['high'] < df['vwma224']).rolling(window=4).min() == 1
     
-    is_above = is_above.fillna(False)
-    is_below = is_below.fillna(False)
+    is_above_confirm = is_above_confirm.fillna(False)
+    is_below_confirm = is_below_confirm.fillna(False)
     
     # 룰 1: 이평선 이격 후 터치 (정수리 밟기) + 꼬리 달고 종가는 트렌드 유지할 때만!
-    df['entryVwmaLong'] = is_above.shift(1) & (df['low'] <= df['vwma224']) & trend_long
-    df['entryVwmaShort'] = is_below.shift(1) & (df['high'] >= df['vwma224']) & trend_short
+    df['entryVwmaLong'] = is_above_confirm.shift(1) & (df['low'] <= df['vwma224']) & trend_long
+    df['entryVwmaShort'] = is_below_confirm.shift(1) & (df['high'] >= df['vwma224']) & trend_short
     
     # 룰 2: SMC 구조적 바닥/천장 진입 + [추세 필터 추가]
-    df['entrySmcLong'] = (df['low'] <= df['swingLowLevel'] * 1.005) & (df['low'] >= df['swingLowLevel']) & trend_long
-    df['entrySmcShort'] = (df['high'] >= df['swingHighLevel'] * 0.995) & (df['high'] <= df['swingHighLevel']) & trend_short
+    df['entrySmcLong'] = is_above_confirm.shift(1) & (df['low'] <= df['swingLowLevel'] * 1.005) & (df['low'] >= df['swingLowLevel']) & trend_long
+    df['entrySmcShort'] = is_below_confirm.shift(1) & (df['high'] >= df['swingHighLevel'] * 0.995) & (df['high'] <= df['swingHighLevel']) & trend_short
 
     # 최종 조건 결합
     df['longCondition'] = df['entryVwmaLong'] | df['entrySmcLong']
