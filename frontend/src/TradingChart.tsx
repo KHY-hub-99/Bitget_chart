@@ -10,23 +10,26 @@ import {
   LineStyle,
   createSeriesMarkers,
   IChartApi,
-  ISeriesApi,
-  IPriceLine, // 🎯 [추가] PriceLine 타입 임포트
+  IPriceLine,
 } from "lightweight-charts";
 
+// 🎯 [추가] App.tsx에서 변경된 카테고리에 맞춰 settings 타입 업데이트
 interface ChartDataProps {
   data: {
     candles: any[];
     volumes: any[];
     indicators: { [key: string]: any[] };
-    markers: any[];
+    markers?: any[]; // 백엔드에서 생성해서 주는 마커 데이터 (선택)
   };
   settings: {
-    kijun: boolean;
     ichimoku: boolean;
+    whale: boolean;
+    smc: boolean;
     bollinger: boolean;
     rsi: boolean;
+    mfi: boolean;
     macd: boolean;
+    signals: boolean; // 시그널 마커 토글
   };
   symbol: string;
   activePositions?: any[];
@@ -42,8 +45,6 @@ const TradingChart: React.FC<ChartDataProps> = ({
   const legendRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRefs = useRef<{ [key: string]: any }>({});
-
-  // 🎯 [추가] 생성된 프라이스 라인들을 저장해둘 참조 객체 (지울 때 필요함)
   const priceLinesRef = useRef<IPriceLine[]>([]);
 
   const settingsRef = useRef(settings);
@@ -63,7 +64,6 @@ const TradingChart: React.FC<ChartDataProps> = ({
 
     items.forEach((item) => {
       if (!item || !item.time) return;
-
       if (!isCandle) {
         if (
           item.value === null ||
@@ -79,7 +79,7 @@ const TradingChart: React.FC<ChartDataProps> = ({
     return Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
   };
 
-  // --- [차트 초기화 useEffect] (기존과 동일) ---
+  // --- [차트 초기화 useEffect] ---
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -94,7 +94,7 @@ const TradingChart: React.FC<ChartDataProps> = ({
         locale: "ko-KR",
         timeFormatter: (timestamp: number) => {
           const d = new Date(timestamp * 1000);
-          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
         },
       },
       grid: {
@@ -120,6 +120,7 @@ const TradingChart: React.FC<ChartDataProps> = ({
 
     const s: any = {};
 
+    // 1. 메인 캔들
     s.candle = chart.addSeries(CandlestickSeries, {
       upColor: "#2ebd85",
       downColor: "#f6465d",
@@ -128,14 +129,44 @@ const TradingChart: React.FC<ChartDataProps> = ({
       wickDownColor: "#f6465d",
     });
 
+    // 🎯 [수정] 마커 플러그인 생성
     s.markersPlugin = createSeriesMarkers(s.candle);
 
-    s.kijun = chart.addSeries(LineSeries, { color: "#f0b90b", lineWidth: 2 });
-    s.senkou_a = chart.addSeries(LineSeries, {
+    // 2. Whale 세력선 (시뮬전략.txt 반영)
+    s.vwma224 = chart.addSeries(LineSeries, {
+      color: "#ffffff", // 흰색 진한 선
+      lineWidth: 3,
+    });
+    s.sma224 = chart.addSeries(LineSeries, {
+      color: "#9e9e9e", // 회색 얇은 선
+      lineWidth: 1,
+    });
+
+    // 3. SMC 구조 라인
+    s.swingHighLevel = chart.addSeries(LineSeries, {
+      color: "rgba(246, 70, 93, 0.8)", // 숏 기준선 (빨강)
+      lineWidth: 2,
+      lineStyle: LineStyle.Dashed,
+    });
+    s.swingLowLevel = chart.addSeries(LineSeries, {
+      color: "rgba(41, 98, 255, 0.8)", // 롱 기준선 (파랑)
+      lineWidth: 2,
+      lineStyle: LineStyle.Dashed,
+    });
+    s.equilibrium = chart.addSeries(LineSeries, {
+      color: "rgba(240, 185, 11, 0.8)", // 50% 익절 기준선 (노랑)
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+    });
+
+    // 4. 일목균형표
+    s.tenkan = chart.addSeries(LineSeries, { color: "#f0b90b", lineWidth: 1 });
+    s.kijun = chart.addSeries(LineSeries, { color: "#ff9800", lineWidth: 2 });
+    s.senkouA = chart.addSeries(LineSeries, {
       color: "rgba(46, 189, 133, 0.4)",
       lineWidth: 1,
     });
-    s.senkou_b = chart.addSeries(LineSeries, {
+    s.senkouB = chart.addSeries(LineSeries, {
       color: "rgba(246, 70, 93, 0.4)",
       lineWidth: 1,
     });
@@ -145,41 +176,54 @@ const TradingChart: React.FC<ChartDataProps> = ({
       bottomColor: "rgba(11, 14, 17, 0)",
       lineWidth: 0,
       priceLineVisible: false,
-      baseValue: { type: "price", price: 0 },
     });
 
-    s.bb_upper = chart.addSeries(LineSeries, {
+    // 5. 볼린저 밴드
+    s.bbUpper = chart.addSeries(LineSeries, {
       color: "rgba(33, 150, 243, 0.4)",
       lineStyle: LineStyle.Dashed,
       lineWidth: 1,
     });
-    s.bb_middle = chart.addSeries(LineSeries, {
+    s.bbMid = chart.addSeries(LineSeries, {
       color: "rgba(158, 158, 158, 0.2)",
       lineStyle: LineStyle.Dotted,
       lineWidth: 1,
     });
-    s.bb_lower = chart.addSeries(LineSeries, {
+    s.bbLower = chart.addSeries(LineSeries, {
       color: "rgba(33, 150, 243, 0.4)",
       lineStyle: LineStyle.Dashed,
       lineWidth: 1,
     });
 
+    // 6. 하단 보조지표 (RSI, MFI, MACD, Volume)
     s.rsi = chart.addSeries(LineSeries, {
       color: "#9c27b0",
       lineWidth: 2,
       priceScaleId: "rsi_p",
     });
-    s.macd = chart.addSeries(LineSeries, {
+    s.mfi = chart.addSeries(LineSeries, {
+      color: "#00bcd4",
+      lineWidth: 2,
+      priceScaleId: "rsi_p",
+    });
+    s.macdLine = chart.addSeries(LineSeries, {
       color: "#2962FF",
       lineWidth: 1.5,
       priceScaleId: "macd_p",
     });
+    s.signalLine = chart.addSeries(LineSeries, {
+      color: "#ff9800",
+      lineWidth: 1.5,
+      priceScaleId: "macd_p",
+    });
+
     s.volume = chart.addSeries(HistogramSeries, {
       color: "rgba(146, 154, 165, 0.2)",
       priceFormat: { type: "volume" },
       priceScaleId: "vol_p",
     });
 
+    // 7. 차트 스케일 조정
     chart.priceScale("right").applyOptions({
       autoScale: true,
       scaleMargins: { top: 0.1, bottom: 0.2 },
@@ -197,55 +241,37 @@ const TradingChart: React.FC<ChartDataProps> = ({
     seriesRefs.current = s;
     chartRef.current = chart;
 
+    // --- [레전드 (Tooltip) 로직] ---
     chart.subscribeCrosshairMove((param) => {
-      // (기존 레전드 로직 동일하여 생략 없이 유지)
       if (!legendRef.current) return;
       const s = seriesRefs.current;
       const candle = param.seriesData.get(s.candle) as any;
       if (!candle || !param.time) return;
 
       const color = candle.close >= candle.open ? "#2ebd85" : "#f6465d";
-
-      const kijunV = param.seriesData.get(s.kijun) as any;
-      const rsiV = param.seriesData.get(s.rsi) as any;
-      const macdV = param.seriesData.get(s.macd) as any;
-      const bbuV = param.seriesData.get(s.bb_upper) as any;
-      const bblV = param.seriesData.get(s.bb_lower) as any;
-      const volV = param.seriesData.get(s.volume) as any;
-
-      const numStyle = `font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.5px;`;
-      const f = (val: number) =>
-        val.toLocaleString(undefined, {
-          minimumFractionDigits: 1,
-          maximumFractionDigits: 1,
-        });
       const formatVol = (val: number) => {
         if (val >= 1000000) return (val / 1000000).toFixed(2) + "M";
         if (val >= 1000) return (val / 1000).toFixed(2) + "K";
         return val.toFixed(1);
       };
 
-      const formattedSymbol = symbolRef.current.replace("USDT", " / USDT");
+      const vwmaV = param.seriesData.get(s.vwma224) as any;
+      const rsiV = param.seriesData.get(s.rsi) as any;
+      const eqV = param.seriesData.get(s.equilibrium) as any;
+      const volV = param.seriesData.get(s.volume) as any;
 
       legendRef.current.innerHTML = `
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-          <span style="color: #fff; font-size: 14px; font-weight: 800; letter-spacing: -0.02em;">${formattedSymbol}</span>
-          <span style="font-size: 10px; color: #5d6673; font-weight: 500; ${numStyle}">${new Date((param.time as number) * 1000).toLocaleString()}</span>
+          <span style="color: #fff; font-size: 14px; font-weight: 800; letter-spacing: -0.02em;">${symbolRef.current}</span>
         </div>
-        
         <div style="display: flex; gap: 16px; margin-bottom: 14px; font-size: 13px;">
-          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">OPEN</span><span style="color: #e6e8ea; ${numStyle}">${f(candle.open)}</span></div>
-          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">HIGH</span><span style="color: #e6e8ea; ${numStyle}">${f(candle.high)}</span></div>
-          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">LOW</span><span style="color: #e6e8ea; ${numStyle}">${f(candle.low)}</span></div>
-          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">CLOSE</span><span style="color: ${color}; font-weight: 700; ${numStyle}">${f(candle.close)}</span></div>
-          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700; margin-bottom: 2px;">VOL</span><span style="color: #e6e8ea; ${numStyle}">${volV?.value !== undefined ? formatVol(volV.value) : "0.0"}</span></div>
+          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700;">CLOSE</span><span style="color: ${color}; font-weight: 700;">${candle.close.toLocaleString()}</span></div>
+          <div style="display: flex; flex-direction: column;"><span style="color: #5d6673; font-size: 9px; font-weight: 700;">VOL</span><span style="color: #e6e8ea;">${volV?.value !== undefined ? formatVol(volV.value) : "0.0"}</span></div>
         </div>
-
         <div style="display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
-          ${settingsRef.current.kijun && kijunV?.value !== undefined ? `<div style="background: rgba(240, 185, 11, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #f0b90b; font-size: 9px; font-weight: 900;">KIJUN</span><span style="color: #f0b90b; font-size: 11px; font-weight: 500; ${numStyle}">${f(kijunV.value)}</span></div>` : ""}
-          ${settingsRef.current.bollinger && bbuV?.value !== undefined && bblV?.value !== undefined ? `<div style="background: rgba(33, 150, 243, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #2196f3; font-size: 9px; font-weight: 900;">BB</span><span style="color: #2196f3; font-size: 11px; font-weight: 500; ${numStyle}">${bbuV.value.toFixed(0)} - ${bblV.value.toFixed(0)}</span></div>` : ""}
-          ${settingsRef.current.rsi && rsiV?.value !== undefined ? `<div style="background: rgba(156, 39, 176, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #9c27b0; font-size: 9px; font-weight: 900;">RSI</span><span style="color: #9c27b0; font-size: 11px; font-weight: 500; ${numStyle}">${rsiV.value.toFixed(2)}</span></div>` : ""}
-          ${settingsRef.current.macd && macdV?.value !== undefined ? `<div style="background: rgba(41, 98, 255, 0.08); padding: 4px 10px; border-radius: 4px; display: flex; align-items: center; gap: 8px;"><span style="color: #2962FF; font-size: 9px; font-weight: 900;">MACD</span><span style="color: #2962FF; font-size: 11px; font-weight: 500; ${numStyle}">${macdV.value.toFixed(2)}</span></div>` : ""}
+          ${settingsRef.current.whale && vwmaV?.value !== undefined ? `<div style="background: rgba(255, 255, 255, 0.08); padding: 4px 10px; border-radius: 4px;"><span style="color: #fff; font-size: 9px; font-weight: 900;">VWMA224</span> <span style="color: #fff; font-size: 11px;">${vwmaV.value.toFixed(1)}</span></div>` : ""}
+          ${settingsRef.current.smc && eqV?.value !== undefined ? `<div style="background: rgba(240, 185, 11, 0.08); padding: 4px 10px; border-radius: 4px;"><span style="color: #f0b90b; font-size: 9px; font-weight: 900;">SMC EQ</span> <span style="color: #f0b90b; font-size: 11px;">${eqV.value.toFixed(1)}</span></div>` : ""}
+          ${settingsRef.current.rsi && rsiV?.value !== undefined ? `<div style="background: rgba(156, 39, 176, 0.08); padding: 4px 10px; border-radius: 4px;"><span style="color: #9c27b0; font-size: 9px; font-weight: 900;">RSI</span> <span style="color: #9c27b0; font-size: 11px;">${rsiV.value.toFixed(2)}</span></div>` : ""}
         </div>
       `;
     });
@@ -259,15 +285,15 @@ const TradingChart: React.FC<ChartDataProps> = ({
     };
   }, []);
 
-  // --- [데이터 렌더링 useEffect] (기존과 동일) ---
+  // --- [데이터 및 시그널 마커 렌더링 useEffect] ---
   useEffect(() => {
     if (!chartRef.current || !data) return;
     const s = seriesRefs.current;
     if (!s.candle) return;
 
+    // 1. 캔들 및 거래량 세팅
     const finalCandles = processData(data.candles, true);
     s.candle.setData(finalCandles);
-
     const finalVols = processData(data.volumes);
     s.volume.setData(
       finalVols.map((v) => {
@@ -282,92 +308,167 @@ const TradingChart: React.FC<ChartDataProps> = ({
       }),
     );
 
-    if (data.indicators?.kijun)
-      s.kijun.setData(processData(data.indicators.kijun));
-    if (data.indicators?.senkou_a) {
-      const sa = processData(data.indicators.senkou_a);
-      s.senkou_a.setData(sa);
-      s.cloud.setData(sa);
-    }
-    if (data.indicators?.senkou_b)
-      s.senkou_b.setData(processData(data.indicators.senkou_b));
-    if (data.indicators?.bb_upper)
-      s.bb_upper.setData(processData(data.indicators.bb_upper));
-    if (data.indicators?.bb_middle)
-      s.bb_middle.setData(processData(data.indicators.bb_middle));
-    if (data.indicators?.bb_lower)
-      s.bb_lower.setData(processData(data.indicators.bb_lower));
-    if (data.indicators?.rsi) s.rsi.setData(processData(data.indicators.rsi));
-    if (data.indicators?.macd_line)
-      s.macd.setData(processData(data.indicators.macd_line));
+    // 2. Standard CamelCase에 따른 지표 데이터 세팅
+    if (data.indicators) {
+      const ind = data.indicators;
+      if (ind.vwma224) s.vwma224.setData(processData(ind.vwma224));
+      if (ind.sma224) s.sma224.setData(processData(ind.sma224));
 
-    if (s.markersPlugin && data.markers) {
-      const markerData = processData(data.markers, true);
-      s.markersPlugin.setMarkers(markerData);
+      if (ind.swingHighLevel)
+        s.swingHighLevel.setData(processData(ind.swingHighLevel));
+      if (ind.swingLowLevel)
+        s.swingLowLevel.setData(processData(ind.swingLowLevel));
+      if (ind.equilibrium) s.equilibrium.setData(processData(ind.equilibrium));
+
+      if (ind.tenkan) s.tenkan.setData(processData(ind.tenkan));
+      if (ind.kijun) s.kijun.setData(processData(ind.kijun));
+      if (ind.senkouA) {
+        const sa = processData(ind.senkouA);
+        s.senkouA.setData(sa);
+        s.cloud.setData(sa);
+      }
+      if (ind.senkouB) s.senkouB.setData(processData(ind.senkouB));
+
+      if (ind.bbUpper) s.bbUpper.setData(processData(ind.bbUpper));
+      if (ind.bbMid) s.bbMid.setData(processData(ind.bbMid));
+      if (ind.bbLower) s.bbLower.setData(processData(ind.bbLower));
+
+      if (ind.rsi) s.rsi.setData(processData(ind.rsi));
+      if (ind.mfi) s.mfi.setData(processData(ind.mfi));
+      if (ind.macdLine) s.macdLine.setData(processData(ind.macdLine));
+      if (ind.signalLine) s.signalLine.setData(processData(ind.signalLine));
     }
 
+    // 3. 🎯 시그널 자동 파싱 및 마커 생성 로직 (시뮬전략.txt 기반)
+    if (s.markersPlugin && settings.signals) {
+      let combinedMarkers: any[] = data.markers
+        ? processData(data.markers, true)
+        : [];
+
+      // 백엔드에서 캔들 객체 내부에 플래그(1 or 0)를 넣어 보냈을 경우 이를 추적하여 마커 자동 생성
+      finalCandles.forEach((c: any) => {
+        // [Long 진입 규칙] SMC Strong Low 기반 파란 박스권 매수
+        if (c.entrySmcLong === 1 || c.entrySmcLong === true) {
+          combinedMarkers.push({
+            time: c.time,
+            position: "belowBar",
+            color: "#2962FF",
+            shape: "arrowUp",
+            text: "Long Entry",
+          });
+        }
+        // [Short 진입 규칙] SMC Strong High 기반 빨간 박스권 매도
+        if (c.entrySmcShort === 1 || c.entrySmcShort === true) {
+          combinedMarkers.push({
+            time: c.time,
+            position: "aboveBar",
+            color: "#f6465d",
+            shape: "arrowDown",
+            text: "Short Entry",
+          });
+        }
+        // [Short 익절] TOP (초록 다이아몬드 대체 -> 초록 화살표/마커)
+        if (c.TOP === 1 || c.TOP === true) {
+          combinedMarkers.push({
+            time: c.time,
+            position: "aboveBar",
+            color: "#2ebd85",
+            shape: "arrowDown",
+            text: "TP (Short)",
+          });
+        }
+        // [Long 익절] BOTTOM (빨간 다이아몬드 대체 -> 빨간 화살표/마커)
+        if (c.BOTTOM === 1 || c.BOTTOM === true) {
+          combinedMarkers.push({
+            time: c.time,
+            position: "belowBar",
+            color: "#f6465d",
+            shape: "arrowUp",
+            text: "TP (Long)",
+          });
+        }
+      });
+
+      // 중복 제거 후 세팅
+      const uniqueMarkers = Array.from(
+        new Map(
+          combinedMarkers.map((m) => [`${m.time}-${m.text}`, m]),
+        ).values(),
+      );
+      s.markersPlugin.setMarkers(uniqueMarkers.sort((a, b) => a.time - b.time));
+    } else if (s.markersPlugin) {
+      s.markersPlugin.setMarkers([]); // 시그널 토글 OFF 시 초기화
+    }
+
+    // 4. 레이어 토글 가시성 적용
     Object.keys(settings).forEach((key) => {
+      const isVisible = (settings as any)[key];
       if (key === "ichimoku") {
-        ["senkou_a", "senkou_b", "cloud"].forEach((k) =>
-          s[k]?.applyOptions({ visible: settings.ichimoku }),
+        ["tenkan", "kijun", "senkouA", "senkouB", "cloud"].forEach((k) =>
+          s[k]?.applyOptions({ visible: isVisible }),
+        );
+      } else if (key === "whale") {
+        ["vwma224", "sma224"].forEach((k) =>
+          s[k]?.applyOptions({ visible: isVisible }),
+        );
+      } else if (key === "smc") {
+        ["swingHighLevel", "swingLowLevel", "equilibrium"].forEach((k) =>
+          s[k]?.applyOptions({ visible: isVisible }),
         );
       } else if (key === "bollinger") {
-        ["bb_upper", "bb_middle", "bb_lower"].forEach((k) =>
-          s[k]?.applyOptions({ visible: settings.bollinger }),
+        ["bbUpper", "bbMid", "bbLower"].forEach((k) =>
+          s[k]?.applyOptions({ visible: isVisible }),
+        );
+      } else if (key === "macd") {
+        ["macdLine", "signalLine"].forEach((k) =>
+          s[k]?.applyOptions({ visible: isVisible }),
         );
       } else if (s[key]) {
-        s[key].applyOptions({ visible: (settings as any)[key] });
+        s[key].applyOptions({ visible: isVisible });
       }
     });
   }, [data, settings]);
 
-  // 🎯 [추가] 포지션 변경 시 진입가/청산가 Price Line을 그리는 useEffect
+  // --- [포지션 Price Line 렌더링 useEffect] ---
   useEffect(() => {
     const s = seriesRefs.current;
     if (!s || !s.candle) return;
 
-    // 1. 기존에 그려진 모든 라인을 안전하게 삭제
     priceLinesRef.current.forEach((line) => {
       s.candle.removePriceLine(line);
     });
-    priceLinesRef.current = []; // 배열 초기화
+    priceLinesRef.current = [];
 
-    // 2. activePositions 배열을 순회하며 라인 생성
     if (activePositions && activePositions.length > 0) {
       activePositions.forEach((pos) => {
         if (pos.entry_price <= 0) return;
-
         const isLong = pos.side === "LONG";
         const sideColor = isLong ? "#2ebd85" : "#f6465d";
 
-        // 진입가 선 생성 [cite: 1621]
         const entryLine = s.candle.createPriceLine({
           price: pos.entry_price,
           color: sideColor,
           lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: `${pos.side} ENTRY (${pos.leverage}x)`,
+          title: `${pos.side} ENTRY`,
         });
+        priceLinesRef.current.push(entryLine);
 
-        // 강제청산가 선 생성
-        let liqLine = null;
         if (pos.liquidation_price > 0) {
-          liqLine = s.candle.createPriceLine({
+          const liqLine = s.candle.createPriceLine({
             price: pos.liquidation_price,
             color: "#ff9800",
             lineWidth: 2,
             lineStyle: LineStyle.Solid,
             axisLabelVisible: true,
-            title: `${pos.side} LIQ`,
+            title: `LIQ`,
           });
+          priceLinesRef.current.push(liqLine);
         }
-        // 관리 목록에 추가
-        priceLinesRef.current.push(entryLine);
-        if (liqLine) priceLinesRef.current.push(liqLine);
       });
     }
-  }, [activePositions]); // currentPosition이 바뀔 때마다 실행
+  }, [activePositions]);
 
   return (
     <div

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo, memo } from "react";
+import React, { useEffect, useState, useRef, useCallback, memo } from "react";
 import { fetchChartData, subscribeChartData } from "./api";
 import TradingChart from "./TradingChart";
 
@@ -18,7 +18,7 @@ const MemoizedResultsPage = memo(SimulationResultsPage);
 const MemoizedReplayControl = memo(ReplayControl);
 
 function App() {
-  // [수정] 뷰 모드 관리: LocalStorage를 사용하여 새로고침 시에도 마지막 탭 유지
+  // 뷰 모드 관리: LocalStorage를 사용하여 새로고침 시에도 마지막 탭 유지
   const [view, setView] = useState<"chart" | "results">(() => {
     return (
       (localStorage.getItem("activeTab") as "chart" | "results") || "chart"
@@ -70,12 +70,16 @@ function App() {
     checkTickRef.current = checkTick;
   }, [checkTick]);
 
+  // [수정됨] Standard CamelCase.txt 그룹별 가시성 상태 관리
   const [visibleLayers, setVisibleLayers] = useState({
-    kijun: true,
-    ichimoku: true,
-    bollinger: true,
-    rsi: true,
-    macd: true,
+    ichimoku: true, // 일목균형표 (tenkan, kijun, senkouA, senkouB)
+    whale: true, // Whale 세력선 (vwma224, sma224)
+    smc: true, // SMC 구조 (swingHighLevel, swingLowLevel, equilibrium)
+    bollinger: false, // 기술적 지표 (bbUpper, bbMid, bbLower)
+    rsi: false, // 기술적 지표 (rsi)
+    mfi: false, // 기술적 지표 (mfi)
+    macd: false, // 기술적 지표 (macdLine, signalLine)
+    signals: true, // 역추세 신호 및 마커 (TOP, BOTTOM, entrySmcLong 등)
   });
 
   const toggleLayer = (layer: keyof typeof visibleLayers) => {
@@ -286,18 +290,35 @@ function App() {
               </button>
             </div>
 
+            {/* [수정됨] 토글 레이어 체크박스 영역 */}
             <div style={layerToggleStyle}>
-              {Object.entries(visibleLayers).map(([key, isVisible]) => (
-                <label key={key} style={checkboxLabelStyle}>
-                  <input
-                    type="checkbox"
-                    checked={isVisible}
-                    onChange={() => toggleLayer(key as any)}
-                    style={{ cursor: "pointer" }}
-                  />
-                  {key.toUpperCase()}
-                </label>
-              ))}
+              {Object.entries(visibleLayers).map(([key, isVisible]) => {
+                // UI에서 보여줄 텍스트 매핑
+                const labelMap: Record<string, string> = {
+                  ichimoku: "ICHIMOKU",
+                  whale: "WHALE 224",
+                  smc: "SMC LEVELS",
+                  bollinger: "BOLLINGER",
+                  rsi: "RSI",
+                  mfi: "MFI",
+                  macd: "MACD",
+                  signals: "SIGNALS",
+                };
+
+                return (
+                  <label key={key} style={checkboxLabelStyle}>
+                    <input
+                      type="checkbox"
+                      checked={isVisible}
+                      onChange={() =>
+                        toggleLayer(key as keyof typeof visibleLayers)
+                      }
+                      style={{ cursor: "pointer" }}
+                    />
+                    {labelMap[key] || key.toUpperCase()}
+                  </label>
+                );
+              })}
             </div>
 
             <div
@@ -375,7 +396,6 @@ function App() {
               backgroundColor: "#0b0e14",
             }}
           >
-            {/* initialSymbol, initialTimeframe으로 전달하여 초기값 설정 */}
             <MemoizedReplayControl
               initialSymbol={symbol}
               initialTimeframe={timeframe}
@@ -504,6 +524,7 @@ const layerToggleStyle: React.CSSProperties = {
   display: "flex",
   gap: "12px",
   flexShrink: 0,
+  flexWrap: "wrap", // 화면이 좁아졌을 때 줄바꿈 처리
 };
 
 const checkboxLabelStyle: React.CSSProperties = {
