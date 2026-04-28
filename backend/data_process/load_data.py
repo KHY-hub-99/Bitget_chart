@@ -6,6 +6,7 @@ import os
 import time
 from datetime import datetime, timezone, timedelta
 from data_process.pine_data import apply_master_strategy
+pd.set_option('future.no_silent_downcasting', True)
 
 class CryptoDataFeed:
     def __init__(self, symbol="BTCUSDT", timeframe="15m"):
@@ -144,7 +145,7 @@ class CryptoDataFeed:
             ]
             for col in int_cols:
                 if col in temp_df.columns:
-                    temp_df[col] = temp_df[col].fillna(0).infer_objects(copy=False).astype(int)
+                    temp_df[col] = pd.to_numeric(temp_df[col], errors='coerce').fillna(0).astype(int)
             
             temp_df = temp_df.replace([np.inf, -np.inf], np.nan)
             

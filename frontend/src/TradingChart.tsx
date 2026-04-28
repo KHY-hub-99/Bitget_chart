@@ -137,38 +137,59 @@ const TradingChart: React.FC<ChartDataProps> = ({
       wickDownColor: "#f6465d",
     });
 
-    // 🎯 [수정] 마커 플러그인 생성
+    // 🎯 [추가] 마커 플러그인 생성
     s.markersPlugin = createSeriesMarkers(s.candle);
 
-    // 2. Whale 세력선 (시뮬전략.txt 반영)
-    s.vwma224 = chart.addSeries(LineSeries, {
-      color: "#ffffff", // 흰색 진한 선
-      lineWidth: 3,
-    });
-    s.sma224 = chart.addSeries(LineSeries, {
-      color: "#9e9e9e", // 회색 얇은 선
-      lineWidth: 1,
-    });
+    // 2. Whale 세력선 (흰색/회색 선)
+    s.vwma224 = chart.addSeries(LineSeries, { color: "#ffffff", lineWidth: 3 });
+    s.sma224 = chart.addSeries(LineSeries, { color: "#9e9e9e", lineWidth: 1 });
 
-    // 1. SMC 고점/저항선 (빨강)
+    // --- [SMC 시각화: 선 + 박스권(Zone) 추가] ---
+
+    // 1-1. SMC 고점 저항선 (빨강 실선)
     s.swingHighLevel = chart.addSeries(LineSeries, {
-      color: "rgba(246, 70, 93, 0.4)", // 투명도를 낮추면 더 깔끔합니다
-      lineWidth: 1, // 선 굵기를 1로 축소
-      lineStyle: LineStyle.Solid, // 👈 실선으로 변경
+      color: "rgba(246, 70, 93, 0.6)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid,
+    });
+    // 1-2. 🔴 숏 진입 존 (Short Entry Zone)
+    // 선 아래로 은은하게 색을 채워 "진입 구역"임을 표시합니다.
+    s.swingHighZone = chart.addSeries(AreaSeries, {
+      topColor: "rgba(246, 70, 93, 0.25)", // 선에 가까운 쪽은 진하게
+      bottomColor: "rgba(246, 70, 93, 0.02)", // 아래로 갈수록 투명하게
+      lineColor: "transparent", // 테두리 선은 없음
+      lineWidth: 0,
+      priceLineVisible: false,
     });
 
-    // 2. SMC 저점/지지선 (파랑)
+    // 2-1. SMC 저점 지지선 (파랑 실선)
     s.swingLowLevel = chart.addSeries(LineSeries, {
-      color: "rgba(41, 98, 255, 0.4)",
+      color: "rgba(41, 98, 255, 0.6)",
       lineWidth: 1,
-      lineStyle: LineStyle.Solid, // 👈 실선으로 변경
+      lineStyle: LineStyle.Solid,
+    });
+    // 2-2. 🔵 롱 진입 존 (Long Entry Zone)
+    // 선 위로 은은하게 색을 채워 "진입 구역"임을 표시합니다.
+    s.swingLowZone = chart.addSeries(AreaSeries, {
+      topColor: "rgba(41, 98, 255, 0.02)", // 위로 갈수록 투명하게
+      bottomColor: "rgba(41, 98, 255, 0.25)", // 선에 가까운 쪽은 진하게
+      lineColor: "transparent",
+      lineWidth: 0,
+      priceLineVisible: false,
     });
 
-    // 3. SMC 중심선 (노랑)
+    // 3-1. SMC 중심선 (노랑 실선)
     s.equilibrium = chart.addSeries(LineSeries, {
-      color: "rgba(240, 185, 11, 0.3)",
+      color: "rgba(240, 185, 11, 0.5)", // 투명도를 살짝 조절
       lineWidth: 1,
-      lineStyle: LineStyle.Solid, // 👈 실선으로 변경
+      lineStyle: LineStyle.Solid,
+    });
+    s.equilibriumZone = chart.addSeries(AreaSeries, {
+      topColor: "rgba(240, 185, 11, 0.15)", // 상단 연한 노랑
+      bottomColor: "rgba(240, 185, 11, 0.01)", // 아래로 갈수록 투명하게
+      lineColor: "transparent",
+      lineWidth: 0,
+      priceLineVisible: false,
     });
 
     // 4. 일목균형표
@@ -326,11 +347,21 @@ const TradingChart: React.FC<ChartDataProps> = ({
       if (ind.vwma224) s.vwma224.setData(processData(ind.vwma224));
       if (ind.sma224) s.sma224.setData(processData(ind.sma224));
 
-      if (ind.swingHighLevel)
-        s.swingHighLevel.setData(processData(ind.swingHighLevel));
-      if (ind.swingLowLevel)
-        s.swingLowLevel.setData(processData(ind.swingLowLevel));
-      if (ind.equilibrium) s.equilibrium.setData(processData(ind.equilibrium));
+      if (ind.swingHighLevel) {
+        const highData = processData(ind.swingHighLevel);
+        s.swingHighLevel.setData(highData);
+        s.swingHighZone.setData(highData); // 👈 영역에도 동일한 데이터 주입
+      }
+      if (ind.swingLowLevel) {
+        const lowData = processData(ind.swingLowLevel);
+        s.swingLowLevel.setData(lowData);
+        s.swingLowZone.setData(lowData); // 👈 영역에도 동일한 데이터 주입
+      }
+      if (ind.equilibrium) {
+        const eqData = processData(ind.equilibrium);
+        s.equilibrium.setData(eqData);
+        s.equilibriumZone.setData(eqData); // 👈 영역에도 동일한 데이터 주입
+      }
 
       if (ind.tenkan) s.tenkan.setData(processData(ind.tenkan));
       if (ind.kijun) s.kijun.setData(processData(ind.kijun));
@@ -424,9 +455,14 @@ const TradingChart: React.FC<ChartDataProps> = ({
           s[k]?.applyOptions({ visible: isVisible }),
         );
       } else if (key === "smc") {
-        ["swingHighLevel", "swingLowLevel", "equilibrium"].forEach((k) =>
-          s[k]?.applyOptions({ visible: isVisible }),
-        );
+        [
+          "swingHighLevel",
+          "swingLowLevel",
+          "swingHighZone",
+          "swingLowZone",
+          "equilibrium",
+          "equilibriumZone", // 👈 equilibriumZone 추가
+        ].forEach((k) => s[k]?.applyOptions({ visible: isVisible }));
       } else if (key === "bollinger") {
         ["bbUpper", "bbMid", "bbLower"].forEach((k) =>
           s[k]?.applyOptions({ visible: isVisible }),
