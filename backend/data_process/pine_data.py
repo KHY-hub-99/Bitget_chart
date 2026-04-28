@@ -1,17 +1,11 @@
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
-from smartmoneyconcepts import smc
-
-# SMC 상태 관리를 위한 클래스
-class Pivot:
-    def __init__(self):
-        self.currentLevel = np.nan
-        self.crossed = False
 
 def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     """
-    OHLCV 데이터프레임을 받아 README.md 표준 변수명에 맞춰 전략 지표를 계산합니다.
+    OHLCV 데이터프레임을 받아 README.md 표준 변수명(CamelCase)에 맞춰 전략 지표를 계산합니다.
+    (Null 방지 Non-Repainting SMC 로직 적용 완료)
     """
     df = df.copy()
     
@@ -40,7 +34,7 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     df['vwma224'] = ta.vwma(df['close'], df['volume'], length=whaleLen)
     df['volConfirm'] = df['volume'] > (ta.sma(df['volume'], length=20) * volMult)
     
-    # RSI & MFI
+    # RSI & MFI (Pine Script와 동일하게 Close 기준 MFI 산출)
     df['rsi'] = ta.rsi(df['close'], length=rsiLen)
     raw_money_flow = df['close'].diff() * df['volume']
     positive_flow = raw_money_flow.where(raw_money_flow > 0, 0).rolling(14).sum()
@@ -55,22 +49,21 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     # 볼린저 밴드
     bb = ta.bbands(df['close'], length=bbLen, std=bbMult)
     if bb is not None and not bb.empty:
-        # pandas_ta의 bbands 결과 순서: 0:Lower, 1:Mid, 2:Upper
         df['bbLower'] = bb.iloc[:, 0]
         df['bbMid'] = bb.iloc[:, 1]
         df['bbUpper'] = bb.iloc[:, 2]
     else:
-        # 데이터가 부족하여 계산되지 않았을 경우 결측치 처리
         df['bbLower'] = np.nan
         df['bbMid'] = np.nan
         df['bbUpper'] = np.nan
+
+    # --- [3. SMC 구조 및 상태 계산 (Non-Repainting 로직)] ---
     
+    high_pivots = (df['high'].shift(swingLen) == df['high'].rolling(window=swingLen * 2, center=False).max())
+    low_pivots = (df['low'].shift(swingLen) == df['low'].rolling(window=swingLen * 2, center=False).min())
 
-    # --- [3. SMC 구조 및 상태 계산 (내부 로직)] ---
-    swing_df = smc.swing_highs_lows(df, swing_length=swingLen)
-
-    df['swingHighLevel'] = swing_df['Level'].where(swing_df['HighLow'] == 1).ffill()
-    df['swingLowLevel'] = swing_df['Level'].where(swing_df['HighLow'] == -1).ffill()
+    df['swingHighLevel'] = df['high'].shift(swingLen).where(high_pivots).ffill()
+    df['swingLowLevel'] = df['low'].shift(swingLen).where(low_pivots).ffill()
     
     df['equilibrium'] = (df['swingHighLevel'] + df['swingLowLevel']) / 2
 
@@ -88,7 +81,7 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     df['extremeTop'] = (df['high'] >= df['bbUpper']) & (df['rsi'] > 75) & (df['mfi'] > 80)
     df['extremeBottom'] = (df['low'] <= df['bbLower']) & (df['rsi'] < 25) & (df['mfi'] < 20)
 
-    # 최종 역추세 마커 (TOP / BOTTOM)
+    # 최종 역추세 마커 (TOP: 빨강 / BOTTOM: 초록)
     df['TOP'] = df['bearishDiv'] | df['extremeTop']
     df['BOTTOM'] = df['bullishDiv'] | df['extremeBottom']
     
@@ -108,20 +101,20 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     df['entryVwmaLong'] = is_above_confirm.shift(1) & (df['low'] <= df['vwma224']) & trend_long
     df['entryVwmaShort'] = is_below_confirm.shift(1) & (df['high'] >= df['vwma224']) & trend_short
     
-    # 룰 2: SMC 구조적 바닥/천장 진입 수정 [치명적 오류 수정 완료]
-    # 실제 시장에서 저가(low)가 swingLowLevel과 소수점 끝까지 정확히(==) 일치할 확률은 0에 가깝습니다.
-    # 따라서 진입 타점을 잡기 위해 종가의 약 0.2%를 오차 허용 범위(Tolerance Zone)로 설정합니다.
+    # 룰 2: SMC 구조적 바닥/천장 진입 (Tolerance 0.2% 적용)
     tolerance = df['close'] * 0.002
     
+    # (파란 박스권 진입)
     df['entrySmcLong'] = (
         is_above_confirm.shift(1) & 
-        (df['low'] <= (df['swingLowLevel'] + tolerance)) & # Swing Low 근처 도달 시 진입
+        (df['low'] <= (df['swingLowLevel'] + tolerance)) & 
         trend_long
     )
     
+    # (빨간 박스권 진입)
     df['entrySmcShort'] = (
         is_below_confirm.shift(1) & 
-        (df['high'] >= (df['swingHighLevel'] - tolerance)) & # Swing High 근처 도달 시 진입
+        (df['high'] >= (df['swingHighLevel'] - tolerance)) & 
         trend_short
     )
 
@@ -129,7 +122,7 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     df['longCondition'] = df['entryVwmaLong'] | df['entrySmcLong']
     df['shortCondition'] = df['entryVwmaShort'] | df['entrySmcShort']
 
-    # 최종 매매 신호 (Sig) - 조건 충족 시 첫 캔들에서만 발생
+    # 최종 매매 신호 (Sig) - 중복 진입 방지 (첫 캔들에서만 발생)
     df['longSig'] = df['longCondition'] & ~df['longCondition'].shift(1, fill_value=False)
     df['shortSig'] = df['shortCondition'] & ~df['shortCondition'].shift(1, fill_value=False)
 
