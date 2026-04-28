@@ -17,3 +17,6 @@ websockets
 # 거래소 연동 및 환경 설정
 ccxt
 python-dotenv
+
+# 거래소 계산 라이브러리
+smartmoneyconcepts

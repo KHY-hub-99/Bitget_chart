@@ -1,6 +1,7 @@
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
+from smartmoneyconcepts import smc
 
 # SMC 상태 관리를 위한 클래스
 class Pivot:
@@ -41,7 +42,10 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     
     # RSI & MFI
     df['rsi'] = ta.rsi(df['close'], length=rsiLen)
-    df['mfi'] = ta.mfi(df['high'], df['low'], df['close'], df['volume'], length=mfiLen)
+    raw_money_flow = df['close'].diff() * df['volume']
+    positive_flow = raw_money_flow.where(raw_money_flow > 0, 0).rolling(14).sum()
+    negative_flow = abs(raw_money_flow.where(raw_money_flow < 0, 0)).rolling(14).sum()
+    df['mfi'] = 100 - (100 / (1 + (positive_flow / negative_flow)))
     
     # MACD
     macd = ta.macd(df['close'], fast=12, slow=26, signal=9)
@@ -63,50 +67,16 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
     
 
     # --- [3. SMC 구조 및 상태 계산 (내부 로직)] ---
-    swingHigh, swingLow = Pivot(), Pivot()
-    swingHighLevel, swingLowLevel = [np.nan] * len(df), [np.nan] * len(df)
-    swingTrend, swingLeg = 0, 0
+    swing_df = smc.swing_highs_lows(df, swing_length=swingLen)
 
-    def check_structure(idx, size, p_high, p_low, p_trend, p_leg):
-        if idx < 2 * size: return p_trend, p_leg
-        
-        # 피벗 판별
-        is_p_high = df['high'].iloc[idx-size] == df['high'].iloc[idx-2*size : idx+1].max()
-        is_p_low = df['low'].iloc[idx-size] == df['low'].iloc[idx-2*size : idx+1].min()
-
-        if is_p_high:
-            if p_leg == 1:
-                p_high.currentLevel = df['high'].iloc[idx-size]
-                p_high.crossed = False
-            p_leg = 0
-        elif is_p_low:
-            if p_leg == 0:
-                p_low.currentLevel = df['low'].iloc[idx-size]
-                p_low.crossed = False
-            p_leg = 1
-
-        close_val = df['close'].iloc[idx]
-        if not np.isnan(p_high.currentLevel) and close_val > p_high.currentLevel:
-            p_high.crossed = True
-            p_trend = 1
-        elif not np.isnan(p_low.currentLevel) and close_val < p_low.currentLevel:
-            p_low.crossed = True
-            p_trend = -1
-        
-        return p_trend, p_leg
-
-    for i in range(len(df)):
-        swingTrend, swingLeg = check_structure(i, swingLen, swingHigh, swingLow, swingTrend, swingLeg)
-        swingHighLevel[i] = swingHigh.currentLevel
-        swingLowLevel[i] = swingLow.currentLevel
-
-    df['swingHighLevel'] = swingHighLevel
-    df['swingLowLevel'] = swingLowLevel
+    df['swingHighLevel'] = swing_df['Level'].where(swing_df['HighLow'] == 1).ffill()
+    df['swingLowLevel'] = swing_df['Level'].where(swing_df['HighLow'] == -1).ffill()
+    
     df['equilibrium'] = (df['swingHighLevel'] + df['swingLowLevel']) / 2
 
     # --- [4. 매매 신호 (Signals)] ---
     
-    # 역추세 세부 신호 (Divergence & Extreme)
+    # 1. 역추세 세부 신호 (Divergence & Extreme)
     high_5_prev = df['high'].rolling(5).max().shift(1)
     low_5_prev = df['low'].rolling(5).min().shift(1)
     rsi_5_max_prev = df['rsi'].rolling(5).max().shift(1)
@@ -114,31 +84,46 @@ def apply_master_strategy(df: pd.DataFrame) -> pd.DataFrame:
 
     df['bearishDiv'] = (df['high'] > high_5_prev) & (df['rsi'] < rsi_5_max_prev) & (df['rsi'] > 65)
     df['bullishDiv'] = (df['low'] < low_5_prev) & (df['rsi'] > rsi_5_min_prev) & (df['rsi'] < 35)
+    
     df['extremeTop'] = (df['high'] >= df['bbUpper']) & (df['rsi'] > 75) & (df['mfi'] > 80)
     df['extremeBottom'] = (df['low'] <= df['bbLower']) & (df['rsi'] < 25) & (df['mfi'] < 20)
 
-    # 최종 역추세 신호 (TOP / BOTTOM)
+    # 최종 역추세 마커 (TOP / BOTTOM)
     df['TOP'] = df['bearishDiv'] | df['extremeTop']
     df['BOTTOM'] = df['bullishDiv'] | df['extremeBottom']
     
-    # 매크로 트렌드: 종가가 VWMA224 위면 Long 유리, 아래면 Short 유리
+    # 2. 매크로 트렌드 확인: 종가가 VWMA224 위면 Long 유리, 아래면 Short 유리
     trend_long = df['close'] > df['vwma224']
     trend_short = df['close'] < df['vwma224']
 
-    # 4캔들 연속 VWMA 위/아래에 있었는지 확인
+    # 4캔들 연속 VWMA 위/아래에 있었는지 확인 (이격 확인용)
     is_above_confirm = (df['low'] > df['vwma224']).rolling(window=4).min() == 1
     is_below_confirm = (df['high'] < df['vwma224']).rolling(window=4).min() == 1
     
     is_above_confirm = is_above_confirm.fillna(False)
     is_below_confirm = is_below_confirm.fillna(False)
     
-    # 룰 1: 이평선 이격 후 터치 (정수리 밟기) + 꼬리 달고 종가는 트렌드 유지할 때만!
+    # 3. 하이브리드 전략 세부 진입 규칙 (Rule 1 & Rule 2)
+    # 룰 1: 이평선 이격 후 터치 (VWMA 정수리 밟기) + 트렌드 유지
     df['entryVwmaLong'] = is_above_confirm.shift(1) & (df['low'] <= df['vwma224']) & trend_long
     df['entryVwmaShort'] = is_below_confirm.shift(1) & (df['high'] >= df['vwma224']) & trend_short
     
-    # 룰 2: SMC 구조적 바닥/천장 진입 + [추세 필터 추가]
-    df['entrySmcLong'] = is_above_confirm.shift(1) & (df['low'] <= df['swingLowLevel']) & (df['low'] >= df['swingLowLevel']) & trend_long
-    df['entrySmcShort'] = is_below_confirm.shift(1) & (df['high'] >= df['swingHighLevel']) & (df['high'] <= df['swingHighLevel']) & trend_short
+    # 룰 2: SMC 구조적 바닥/천장 진입 수정 [치명적 오류 수정 완료]
+    # 실제 시장에서 저가(low)가 swingLowLevel과 소수점 끝까지 정확히(==) 일치할 확률은 0에 가깝습니다.
+    # 따라서 진입 타점을 잡기 위해 종가의 약 0.2%를 오차 허용 범위(Tolerance Zone)로 설정합니다.
+    tolerance = df['close'] * 0.002
+    
+    df['entrySmcLong'] = (
+        is_above_confirm.shift(1) & 
+        (df['low'] <= (df['swingLowLevel'] + tolerance)) & # Swing Low 근처 도달 시 진입
+        trend_long
+    )
+    
+    df['entrySmcShort'] = (
+        is_below_confirm.shift(1) & 
+        (df['high'] >= (df['swingHighLevel'] - tolerance)) & # Swing High 근처 도달 시 진입
+        trend_short
+    )
 
     # 최종 조건 결합
     df['longCondition'] = df['entryVwmaLong'] | df['entrySmcLong']
