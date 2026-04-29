@@ -79,18 +79,22 @@ def main():
     lowest_3: Series[float] = ta.lowest(low, lookback)
     highest_3: Series[float] = ta.highest(high, lookback)
 
-    # rule 1: SMA/VWMA (Touch Pullback)
-    touch_sma_long = (lowest_3[1] > sma224[1]) and (low <= sma224)
-    touch_vwma_long = (lowest_3[1] > vwma224[1]) and (low <= vwma224)
-    touch_sma_short = (highest_3[1] < sma224[1]) and (high >= sma224)
-    touch_vwma_short = (highest_3[1] < vwma224[1]) and (high >= vwma224)
+    # Rule 1: SMA/VWMA (Touch Pullback)
+    touch_sma_long = (lowest_3[1] > sma224[1]) and (low <= sma224) and (close > sma224)
+    touch_vwma_long = (lowest_3[1] > vwma224[1]) and (low <= vwma224) and (close > vwma224)
+    
+    touch_sma_short = (highest_3[1] < sma224[1]) and (high >= sma224) and (close < sma224)
+    touch_vwma_short = (highest_3[1] < vwma224[1]) and (high >= vwma224) and (close < vwma224)
 
-    # rule 2: SMC
+    # Rule 2: SMC
     entrySmcLong = not na(pl)
     entrySmcShort = not na(ph)
 
-    longSig_val = 1 if (touch_sma_long or touch_vwma_long or entrySmcLong) else 0
-    shortSig_val = 1 if (touch_sma_short or touch_vwma_short or entrySmcShort) else 0
+    longSig_Rule1 = 1 if (touch_sma_long or touch_vwma_long) else 0
+    shortSig_Rule1 = 1 if (touch_sma_short or touch_vwma_short) else 0
+
+    longSig_Rule2 = 1 if entrySmcLong else 0
+    shortSig_Rule2 = 1 if entrySmcShort else 0
 
     return {
         "tenkan": tenkan,
@@ -119,6 +123,8 @@ def main():
         "bottomDiamond": 1 if bottomDiamond else 0,
         "trend": trend,
         
-        "longSig": longSig_val,
-        "shortSig": shortSig_val
+        "longSig_Rule1": longSig_Rule1,
+        "shortSig_Rule1": shortSig_Rule1,
+        "longSig_Rule2": longSig_Rule2,
+        "shortSig_Rule2": shortSig_Rule2
     }

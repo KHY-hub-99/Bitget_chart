@@ -14,7 +14,9 @@ def convert_df_to_chart_data(df: pd.DataFrame, max_points: int = 5000):
     df_js = df_js.loc[:, ~df_js.columns.duplicated()]
     df_js = df_js.replace([np.inf, -np.inf], np.nan)
     
-    # 시간 포맷 변환 (UNIX Timestamp - 초 단위)
+    # 시간 포맷 변환 (UNIX Timestamp)
+    # ※ 주의: Lightweight Charts v4 이상에서 일봉 미만(15m 등)은 반드시 UTC 초(s) 단위여야 합니다.
+    # 이전 코드에서 밀리초(ms)로 넘기고 있었다면 /1000 을 해주는 이 로직이 맞습니다.
     time_col = 'time' if 'time' in df_js.columns else 'index'
     if time_col in df_js.columns:
         df_js['time'] = df_js[time_col].apply(
@@ -30,7 +32,7 @@ def convert_df_to_chart_data(df: pd.DataFrame, max_points: int = 5000):
     else:
         volumes = []
     
-    # [3] 지표 데이터 그룹화 (최종 통일 리스트 기준)
+    # [3] 지표 데이터 그룹화 (최종 통일 리스트 기준 반영)
     indicator_names = [
         # 일목
         "tenkan", "kijun", "senkouA", "senkouB", "cloudTop", "cloudBottom",
@@ -44,8 +46,8 @@ def convert_df_to_chart_data(df: pd.DataFrame, max_points: int = 5000):
         "topDiamond", "bottomDiamond",
         # 추세
         "trend",
-        # 매매 시그널
-        "longSig", "shortSig"
+        # [수정됨] 매매 조건 및 최종 확정 시그널
+        "longSig_Rule1", "shortSig_Rule1", "longSig_Rule2", "shortSig_Rule2"
     ]
     
     indicators = {}
@@ -73,18 +75,23 @@ def convert_df_to_chart_data(df: pd.DataFrame, max_points: int = 5000):
     for _, row in df_js.iterrows():
         t = row['time']
         
-        # A. 메인 진입 신호 (세부 조건 컬럼이 없으므로 단순화)
-        if row.get('longSig') == 1:
-            markers.append({"time": t, "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "LONG"})
+        # A. 메인 진입 신호 (Rule1, Rule2 세분화 반영 및 프론트엔드 연동 텍스트 삽입)
+        if row.get('longSig_Rule1') == 1:
+            markers.append({"time": t, "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "longSig_Rule1"})
+        elif row.get('longSig_Rule2') == 1:
+            markers.append({"time": t, "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "longSig_Rule2"})
             
-        elif row.get('shortSig') == 1:
-            markers.append({"time": t, "position": "aboveBar", "color": "#ef5350", "shape": "arrowDown", "text": "SHORT"})
+        if row.get('shortSig_Rule1') == 1:
+            markers.append({"time": t, "position": "aboveBar", "color": "#ef5350", "shape": "arrowDown", "text": "shortSig_Rule1"})
+        elif row.get('shortSig_Rule2') == 1:
+            markers.append({"time": t, "position": "aboveBar", "color": "#ef5350", "shape": "arrowDown", "text": "shortSig_Rule2"})
             
         # B. 역추세 및 익절 신호 (다이아몬드)
+        # 프론트엔드의 `m.text.includes("topDiamond")` 등에 완벽히 대응
         if row.get('topDiamond') == 1:
-            markers.append({"time": t, "position": "aboveBar", "color": "#FF5252", "shape": "diamond", "text": "TOP"})
+            markers.append({"time": t, "position": "aboveBar", "color": "#FF5252", "shape": "diamond", "text": "topDiamond"})
         elif row.get('bottomDiamond') == 1: 
-            markers.append({"time": t, "position": "belowBar", "color": "#4CAF50", "shape": "diamond", "text": "BOTTOM"})
+            markers.append({"time": t, "position": "belowBar", "color": "#4CAF50", "shape": "diamond", "text": "bottomDiamond"})
 
         # C. 시장 구조 강도 마킹 (레벨 변화 확정 시점)
         # 상단 레벨 확정

@@ -28,12 +28,14 @@ class CryptoDataFeed:
         db_folder.mkdir(parents=True, exist_ok=True)
         self.db_path = db_folder / "crypto_dashboard.db"
         
-        # [기준] 사용자 정의 23개 지표 컬럼
+        # [기준] 사용자 정의 25개 지표 컬럼 (longSig/shortSig를 Rule1/Rule2로 세분화)
         self.standard_cols = [
             "tenkan", "kijun", "senkouA", "senkouB", "cloudTop", "cloudBottom",
             "sma224", "vwma224", "rsiVal", "mfiVal", "macdLine", "signalLine",
-            "bbUpper", "bbLower", "bbMid", "longSig", "shortSig", "topDiamond",
-            "bottomDiamond", "swingHighLevel", "trailingBottom", "equilibrium", "trend"
+            "bbUpper", "bbLower", "bbMid", 
+            "longSig_Rule1", "shortSig_Rule1", "longSig_Rule2", "shortSig_Rule2", 
+            "topDiamond", "bottomDiamond", "swingHighLevel", "trailingBottom", 
+            "equilibrium", "trend"
         ]
         
         self._init_db()
@@ -52,13 +54,13 @@ class CryptoDataFeed:
                 )
             """)
             
-            # 지표 컬럼 Migration (23개 표준 컬럼 추가)
+            # 지표 컬럼 Migration (25개 표준 컬럼 추가)
             cursor.execute(f'PRAGMA table_info("{self.symbol}")')
             existing_cols = [row[1] for row in cursor.fetchall()]
             
             for col in self.standard_cols:
                 if col not in existing_cols:
-                    col_type = "INTEGER" if col in ["trend", "longSig", "shortSig", "topDiamond", "bottomDiamond"] else "REAL"
+                    col_type = "INTEGER" if col in ["trend", "longSig_Rule1", "shortSig_Rule1", "longSig_Rule2", "shortSig_Rule2", "topDiamond", "bottomDiamond"] else "REAL"
                     cursor.execute(f'ALTER TABLE "{self.symbol}" ADD COLUMN "{col}" {col_type}')
 
             # 2. ML 학습 데이터셋 테이블 (entry_ 접두사 사용 및 메타데이터 컬럼 추가)
@@ -74,7 +76,7 @@ class CryptoDataFeed:
                     -- 동적 지표 컬럼들 (self.standard_cols 매핑)
                     {ml_features},
                     
-                    -- [추가됨] 하이브리드 전략 판별 및 손절 태그
+                    -- 하이브리드 전략 판별 및 손절 태그
                     strategyRule TEXT,
                     slTag TEXT,
                     appliedSlRatio REAL,
@@ -96,7 +98,7 @@ class CryptoDataFeed:
                     winRate REAL, totalPnl REAL, avgPnl REAL,
                     maxDrawdown REAL, avgDuration REAL,
                     
-                    -- [추가됨] 불타기(피라미딩) 평균 횟수
+                    -- 불타기(피라미딩) 평균 횟수
                     avgPyramidCount REAL, 
                     
                     testedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -119,16 +121,28 @@ class CryptoDataFeed:
             opening_hours="24x7", session_starts=[0], session_ends=[86400]
         )
 
-        # OHLCV 변환 (Datetime index -> timestamp seconds)
+        # OHLCV 변환 (Datetime index -> timestamp seconds) 방어 코드 적용
         temp_df = df.reset_index()
-        ohlcv_list = [
-            OHLCV(
-                timestamp=int(row['time'].timestamp()),
-                open=float(row['open']), high=float(row['high']), 
-                low=float(row['low']), close=float(row['close']), 
-                volume=float(row['volume']), extra_fields={}
-            ) for _, row in temp_df.iterrows()
-        ]
+        ohlcv_list = []
+        for _, row in temp_df.iterrows():
+            t_val = row['time']
+            
+            # 안전한 타임스탬프 추출 로직
+            if isinstance(t_val, (int, float, np.integer, np.floating)):
+                ts_seconds = int(t_val / 1000) if t_val > 1e11 else int(t_val)
+            elif hasattr(t_val, 'timestamp'):
+                ts_seconds = int(t_val.timestamp())
+            else:
+                ts_seconds = int(pd.to_datetime(t_val).timestamp())
+
+            ohlcv_list.append(
+                OHLCV(
+                    timestamp=ts_seconds,
+                    open=float(row['open']), high=float(row['high']), 
+                    low=float(row['low']), close=float(row['close']), 
+                    volume=float(row['volume']), extra_fields={}
+                )
+            )
 
         runner = ScriptRunner(script_path=self.script_file, ohlcv_iter=ohlcv_list, syminfo=si)
         
@@ -152,7 +166,7 @@ class CryptoDataFeed:
             temp_df['timeframe'] = self.timeframe
             
             # [1] INTEGER 컬럼들 0/1 강제 (NULL 방지)
-            int_cols = ["longSig", "shortSig", "topDiamond", "bottomDiamond", "trend"]
+            int_cols = ["longSig_Rule1", "shortSig_Rule1", "longSig_Rule2", "shortSig_Rule2", "topDiamond", "bottomDiamond", "trend"]
             for col in int_cols:
                 if col in temp_df.columns:
                     temp_df[col] = pd.to_numeric(temp_df[col], errors='coerce').fillna(0).astype(int)
@@ -165,13 +179,13 @@ class CryptoDataFeed:
                     return None
                 return x
 
-            # [수정 포인트] Pandas 2.1.0+ 에서는 applymap 대신 map을 사용합니다.
+            # Pandas 2.1.0+ 에서는 applymap 대신 map을 사용합니다.
             if hasattr(temp_df, 'map'):
                 temp_df = temp_df.map(clean_na_values)
             else:
                 temp_df = temp_df.applymap(clean_na_values)
 
-            # [3] 최종 DB 컬럼 순서 배치 (23개 표준 컬럼 기준)
+            # [3] 최종 DB 컬럼 순서 배치 (표준 컬럼 기준)
             db_cols = ['time', 'timeframe', 'open', 'high', 'low', 'close', 'volume'] + self.standard_cols
             
             for col in db_cols:
