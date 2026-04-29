@@ -26,12 +26,11 @@
 
 - `sma224`
 - `vwma224`
-- `volConfirm`
 
 **기술적 지표 (RSI, MFI, MACD, BB)**
 
-- `rsi`
-- `mfi`
+- `rsiVal`
+- `mfiVal`
 - `macdLine`
 - `signalLine`
 - `bbLower`
@@ -41,39 +40,20 @@
 **SMC 구조 및 가격 레벨**
 
 - `swingHighLevel`
-- `swingLowLevel`
+- `trailingBottom`
 - `equilibrium`
 
 **역추세 세부 신호 및 마커**
 
-- `bearishDiv`
-- `bullishDiv`
-- `extremeTop`
-- `extremeBottom`
-- `TOP`
-- `BOTTOM`
+- `topDiamond`
+- `bottomDiamond`
 
 **추적 스윙 및 시장 추세 (Trailing Extremes & Trend)**
 
 - `trend`
-- `trailingTop`
-- `trailingBottom`
-- `topType`
-- `bottomType`
-
-**하이브리드 전략 세부 진입 규칙 (Rule 1 & Rule 2)**
-
-- `entryVwmaLong`
-- `entryVwmaShort`
-- `entrySmaLong`
-- `entrySmaShort`
-- `entrySmcLong`
-- `entrySmcShort`
 
 **매매 조건 및 최종 확정 시그널**
 
-- `longCondition`
-- `shortCondition`
 - `longSig`
 - `shortSig`
 
