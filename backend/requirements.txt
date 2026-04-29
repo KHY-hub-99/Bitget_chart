@@ -19,4 +19,4 @@ ccxt
 python-dotenv
 
 # 거래소 계산 라이브러리
-smartmoneyconcepts
+pynesys-pynecore[all]
