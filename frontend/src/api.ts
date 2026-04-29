@@ -6,7 +6,7 @@ const WS_BASE = "ws://localhost:8000";
 
 // --- [ 0. 데이터 타입 정의 (Type Definitions) ] ---
 
-// 백엔드에서 전달받는 캔들 1개(또는 틱)의 전체 데이터 포맷
+// 백엔드에서 전달받는 캔들 1개(또는 틱)의 전체 데이터 포맷 (통일 컬럼 100% 매핑)
 export interface StrategyChartData {
   time: number; // Unix Timestamp (초)
   open: number;
@@ -16,36 +16,41 @@ export interface StrategyChartData {
   volume: number;
 
   // 1. 일목균형표
+  tenkan?: number;
+  kijun?: number;
   senkouA?: number;
   senkouB?: number;
+  cloudTop?: number;
+  cloudBottom?: number;
 
-  // 2. Whale 세력선 (핵심 지표)
+  // 2. Whale 세력선
   vwma224?: number;
   sma224?: number;
 
-  // 3. SMC 구조 및 가격 레벨
+  // 3. 기술적 지표 (RSI, MFI, MACD, BB)
+  rsiVal?: number;
+  mfiVal?: number;
+  macdLine?: number;
+  signalLine?: number;
+  bbLower?: number;
+  bbMid?: number;
+  bbUpper?: number;
+
+  // 4. SMC 구조 및 가격 레벨
   swingHighLevel?: number;
-  swingLowLevel?: number;
+  trailingBottom?: number;
   equilibrium?: number;
 
-  // 4. 추적 스윙 및 시장 추세 (NEW)
+  // 5. 역추세 세부 신호 및 마커
+  topDiamond?: number; // 롱 익절 마커 (1 or 0)
+  bottomDiamond?: number; // 숏 익절 마커 (1 or 0)
+
+  // 6. 추적 스윙 및 시장 추세
   trend?: number; // 1 (상승), -1 (하락)
-  trailingTop?: number; // 추적 고점
-  trailingBottom?: number; // 추적 저점 (SL 기준)
-  topType?: string; // 'Strong High' / 'Weak High'
-  bottomType?: string; // 'Strong Low' / 'Weak Low'
 
-  // 5. 역추세 및 익절 마커 시그널
-  TOP?: number; // 롱 익절 다이아몬드 (1 or 0)
-  BOTTOM?: number; // 숏 익절 다이아몬드 (1 or 0)
-
-  // 6. 하이브리드 진입 규칙 시그널 (SMA 추가됨)
-  entryVwmaLong?: number;
-  entryVwmaShort?: number;
-  entrySmaLong?: number; // Rule 2: SMA 터치
-  entrySmaShort?: number;
-  entrySmcLong?: number; // Rule 3: SMC 터치
-  entrySmcShort?: number;
+  // 7. 매매 조건 및 최종 확정 시그널
+  longSig?: number;
+  shortSig?: number;
 }
 
 // --- [ 1. 차트 및 기존 데이터 관련 API ] ---
@@ -59,7 +64,7 @@ export const fetchChartData = async (
     const response = await axios.get(`${API_BASE}/api/history`, {
       params: { symbol, timeframe, days },
     });
-    return response.data; // 이제 백엔드에서 chart_data 전체(markers, metadata 포함)를 리턴함
+    return response.data;
   } catch (error) {
     console.error("🔴 데이터 통신 에러:", error);
     throw error;
@@ -95,7 +100,7 @@ export const subscribeChartData = (
 
 // --- [ 2. 시뮬레이션(격리 모드) 전용 API ] ---
 
-// 백엔드의 최신 Position 모델에 맞춤
+// 백엔드의 최신 serialize_wallet 출력 포맷에 맞춤
 export interface Position {
   symbol: string;
   side: "LONG" | "SHORT";
@@ -106,14 +111,14 @@ export interface Position {
   isolated_margin: number;
   liquidation_price: number;
   unrealized_pnl: number;
-  take_profit?: number | null; // 백엔드의 entry_equilibrium 매핑
-  stop_loss?: number | null; // 백엔드의 stop_loss_price 매핑
+  take_profit: number | null; // 백엔드의 entry_equilibrium
+  stop_loss: number | null; // 백엔드의 stop_loss_price
 
-  // 분할 진입 및 전략 추적 필드
-  entry_tags: string[]; // 예: ["SMA", "VWMA"]
+  // 분할 진입 및 하이브리드 전략 추적 필드
   is_partial_closed: boolean; // 50% 익절 여부
-  sl_type: string | null; // 예: "SMC_TRAILING_STRONG_LOW"
-  entry_rule: string; // 예: "RULE_2_SMA"
+  entry_tags: string[]; // 예: ["SMA", "VWMA", "SMC"]
+  strategy_rule: string; // "RULE_1" 또는 "RULE_2" (기존 entry_rule, sl_type 대체)
+  first_entry_line_val: number | null; // 룰 1 추가 진입 시 유리한 평단가 비교를 위한 1차 진입선 값
 }
 
 export interface SimulationStatus {
@@ -130,7 +135,6 @@ export const simulationApi = {
     return response.data;
   },
 
-  // margin 대신 margin_ratio 사용
   placeOrder: async (orderData: {
     symbol: string;
     side: "LONG" | "SHORT";
@@ -179,7 +183,6 @@ export const simulationApi = {
 
 // --- [ 3. 전략 분석 및 최적화 관련 API ] ---
 
-// tp_ratio/sl_ratio 대신 DB 컬럼명에 맞춘 marginRatio 사용
 export interface StrategyRank {
   positionMode: string;
   leverage: number;
@@ -228,7 +231,6 @@ export const analysisApi = {
 
   getLogSocketUrl: () => `${WS_BASE}/ws/simulation/logs`,
 
-  // tp_ratio, sl_ratio 파라미터 삭제, margin_ratio 적용
   getSimulationReplay: async (
     symbol: string,
     timeframe: string,

@@ -72,14 +72,14 @@ function App() {
 
   // [수정됨] Standard CamelCase.txt 그룹별 가시성 상태 관리
   const [visibleLayers, setVisibleLayers] = useState({
-    ichimoku: true, // 일목균형표 (tenkan, kijun, senkouA, senkouB)
+    ichimoku: true, // 일목균형표 (tenkan, kijun, senkouA, senkouB, cloudTop, cloudBottom)
     whale: true, // Whale 세력선 (vwma224, sma224)
-    smc: true, // SMC 구조 (swingHighLevel, swingLowLevel, equilibrium)
+    smc: true, // SMC 구조 (swingHighLevel, trailingBottom, equilibrium)
     bollinger: false, // 기술적 지표 (bbUpper, bbMid, bbLower)
-    rsi: false, // 기술적 지표 (rsi)
-    mfi: false, // 기술적 지표 (mfi)
+    rsi: false, // 기술적 지표 (rsiVal)
+    mfi: false, // 기술적 지표 (mfiVal)
     macd: false, // 기술적 지표 (macdLine, signalLine)
-    signals: true, // 역추세 신호 및 마커 (TOP, BOTTOM, entrySmcLong 등)
+    signals: true, // 시그널 및 마커 (topDiamond, bottomDiamond, trend, longSig, shortSig)
   });
 
   const toggleLayer = (layer: keyof typeof visibleLayers) => {
@@ -293,7 +293,7 @@ function App() {
             {/* [수정됨] 토글 레이어 체크박스 영역 */}
             <div style={layerToggleStyle}>
               {Object.entries(visibleLayers).map(([key, isVisible]) => {
-                // UI에서 보여줄 텍스트 매핑
+                // UI에서 보여줄 텍스트 매핑 (직관적인 이름 유지)
                 const labelMap: Record<string, string> = {
                   ichimoku: "ICHIMOKU",
                   whale: "WHALE 224",
@@ -524,7 +524,7 @@ const layerToggleStyle: React.CSSProperties = {
   display: "flex",
   gap: "12px",
   flexShrink: 0,
-  flexWrap: "wrap", // 화면이 좁아졌을 때 줄바꿈 처리
+  flexWrap: "wrap",
 };
 
 const checkboxLabelStyle: React.CSSProperties = {
