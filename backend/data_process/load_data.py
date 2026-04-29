@@ -105,7 +105,7 @@ class CryptoDataFeed:
             ''')
             
             conn.commit()
-            print(f"[DATABASE] 모든 테이블이 23개 기준 컬럼({self.symbol})에 맞춰 초기화되었습니다.")
+            print(f"[DATABASE] 모든 테이블이 ({self.symbol}-{self.timeframe})에 맞춰 초기화되었습니다.")
             
     def _run_pynecore_engine(self, df):
         """PyneCore ScriptRunner를 통한 지표 연산 핵심 로직"""
