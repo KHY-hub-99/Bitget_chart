@@ -279,61 +279,130 @@ class CryptoDataFeed:
         self.save_enriched_df(self.df)
 
     def update_data(self):
-        """최신 데이터 수집 및 지표 업데이트"""
-        klines = self._fetch_binance_klines(limit=20)
-        self._save_raw_ohlcv(klines)
+        """[개선됨] 빈 구간만 최신 데이터 수집 및 지표 업데이트"""
+        # 1. DB의 마지막 시간을 확인하여 빠진 구간만 가져옵니다.
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(f'SELECT MAX(time) FROM "{self.symbol}" WHERE timeframe = ?', (self.timeframe,))
+                max_time = cursor.fetchone()[0]
+        except Exception:
+            max_time = None
+
+        if max_time:
+            # 마지막 데이터의 캔들 시작 시간부터 현재까지 가져옴
+            klines = self._fetch_binance_klines(start_time=max_time, limit=500)
+        else:
+            klines = self._fetch_binance_klines(limit=500)
+
+        # 2. Raw OHLCV 저장
+        if klines:
+            self._save_raw_ohlcv(klines)
         
-        # Whale 지표(224)를 고려하여 최근 500개 데이터로 연산
+        # 3. Whale 지표(224)를 고려하여 최근 500개 데이터로 연산 및 갱신
         latest_df = self.load_latest_from_db(limit=500)
         if latest_df is not None and len(latest_df) >= 224:
-            self.df = self._run_pynecore_engine(latest_df)
-            self.save_enriched_df(self.df)
+            # 엔진 연산
+            calc_df = self._run_pynecore_engine(latest_df)
+            self.save_enriched_df(calc_df)
+            self.df = calc_df
+            
         return self.df
 
     def sync_recent_data(self, required_limit=5000):
-        """기존 동기화 로직 유지"""
-        print(f"\n[CHECK] {self.symbol} 최근 데이터 상태 확인 중...")
+        """[개선됨] 최신순으로 점검하여 없는 시간대만 API 호출, 있으면 로드"""
+        print(f"\n[CHECK] {self.symbol} ({self.timeframe}) 최신 데이터 상태 확인 중...")
+        
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute(f'SELECT COUNT(*) FROM "{self.symbol}" WHERE timeframe = ?', (self.timeframe,))
-                count = cursor.fetchone()[0]
-        except: count = 0
+                # 최신 데이터 시간과 총 데이터 개수를 가져옴
+                cursor.execute(f'SELECT MAX(time), COUNT(*) FROM "{self.symbol}" WHERE timeframe = ?', (self.timeframe,))
+                row = cursor.fetchone()
+                db_max_time = row[0]
+                db_count = row[1]
+        except Exception:
+            db_max_time = None
+            db_count = 0
 
-        if count < required_limit:
-            print(f" >>> [API CALL] 데이터 부족({count}/{required_limit}). 수집을 시작합니다.")
-            current_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+        current_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+        # 케이스 1: DB가 텅 비어있거나, 요구하는 limit보다 턱없이 부족할 때 (초기화 상태)
+        if db_count < required_limit and db_max_time is None:
+            print(f" >>> [API CALL] 데이터베이스가 비어있습니다. 초기 수집을 시작합니다.")
+            fetch_end_time = current_ts
             total_fetched = 0
             while total_fetched < required_limit:
-                klines = self._fetch_binance_klines(end_time=current_ts, limit=1000)
+                klines = self._fetch_binance_klines(end_time=fetch_end_time, limit=1000)
                 if not klines: break
                 self._save_raw_ohlcv(klines)
                 total_fetched += len(klines)
-                current_ts = klines[0][0] - 1
+                fetch_end_time = klines[0][0] - 1
                 time.sleep(0.1)
-        
-        print(f" >>> [SUCCESS] 데이터 확보 완료.")
+
+        # 케이스 2: DB에 데이터는 있지만, 최신 데이터가 밀려있을 때 (Gap 채우기)
+        elif db_max_time is not None:
+            tf_ms_map = {
+                "1m": 60000,
+                "15m": 900000,
+                "30m": 1800000,
+                "1h": 3600000,
+                "4h": 14400000
+            }
+            tf_ms = tf_ms_map.get(self.timeframe, 60000)
+            
+            # 마지막 데이터와 현재 시간 사이에 캔들 1개 이상의 간격이 있다면 업데이트 진행
+            if current_ts - db_max_time > tf_ms:
+                print(f" >>> [API CALL] {self.symbol} 밀린 최신 데이터를 동기화합니다...")
+                fetch_start_time = db_max_time
+                while True:
+                    klines = self._fetch_binance_klines(start_time=fetch_start_time, limit=1000)
+                    if not klines or len(klines) <= 1: 
+                        break # 업데이트 할 것이 없거나 마지막 캔들 하나만 겹칠 때
+                    
+                    self._save_raw_ohlcv(klines)
+                    
+                    # 가져온 데이터의 가장 마지막 시간을 다음 호출의 시작 시간으로 사용
+                    fetch_start_time = klines[-1][0]
+                    # 만약 가져온 데이터가 1000개 미만이라면 최신까지 다 가져온 것
+                    if len(klines) < 1000:
+                        break
+                    time.sleep(0.1)
+            else:
+                print(f" >>> [OK] {self.symbol} 데이터가 이미 최신 상태입니다. (DB Load)")
+                
+        # 데이터베이스 전체 지표 갱신 (전체 계산이 너무 무거우면 이 부분을 제한하는 것도 고려해야 함)
         self.refresh_indicators()
 
     def sync_historical_data(self, start_days=730):
-        """기존 과거 백필 로직 유지"""
+        """[유지 및 개선] 과거 데이터 방향(역방향)으로 없는 시간대만 호출"""
         target_ts = int((datetime.now(timezone.utc) - timedelta(days=start_days)).timestamp() * 1000)
+        
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
+                # 저장된 가장 오래된 과거 시간을 확인
                 cursor.execute(f'SELECT MIN(time) FROM "{self.symbol}" WHERE timeframe = ?', (self.timeframe,))
                 db_min = cursor.fetchone()[0]
-        except: db_min = None
+        except Exception: 
+            db_min = None
 
+        # 타겟 날짜보다 DB의 최소 시간이 더 최근이면(즉, 과거 데이터가 더 필요하면) 뒤로 거슬러 올라감
         if not db_min or db_min > target_ts:
+            print(f" >>> [API CALL] {self.symbol} 과거 데이터 백필(Backfill)을 시작합니다. 목표일수: {start_days}일")
             current_ts = db_min - 1 if db_min else int(datetime.now(timezone.utc).timestamp() * 1000)
+            
             while current_ts > target_ts:
                 data = self._fetch_binance_klines(end_time=current_ts, limit=1000)
-                if not data or len(data) <= 1: break
+                if not data or len(data) <= 1: 
+                    break
                 self._save_raw_ohlcv(data)
                 current_ts = data[0][0] - 1
                 time.sleep(0.1)
-        self.refresh_indicators()
+                
+            self.refresh_indicators()
+        else:
+            print(f" >>> [OK] {self.symbol} {start_days}일 치 과거 데이터가 이미 확보되어 있습니다.")
         
     # --- 유틸리티 메서드 ---
 
@@ -374,5 +443,14 @@ class CryptoDataFeed:
         df_chart = self.df.tail(limit).reset_index()
         df_chart.columns = [str(c) for c in df_chart.columns]
         if 'time' in df_chart.columns:
-            df_chart['time'] = df_chart['time'].apply(lambda x: int(x.timestamp() * 1000))
+            def safe_to_ms(x):
+                if isinstance(x, (int, float, np.integer, np.floating)):
+                    # 이미 유닉스 타임스탬프인 경우 (13자리 밀리초인지, 10자리 초 단위인지 판별)
+                    return int(x) if x > 1e11 else int(x * 1000)
+                elif hasattr(x, 'timestamp'):
+                    return int(x.timestamp() * 1000)
+                else:
+                    return int(pd.to_datetime(x).timestamp() * 1000)
+
+            df_chart['time'] = df_chart['time'].apply(safe_to_ms)
         return df_chart
