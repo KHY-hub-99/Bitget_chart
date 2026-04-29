@@ -81,11 +81,9 @@ def main():
     entrySmcLong = not na(pl)
     entrySmcShort = not na(ph)
 
-    # 최종 매매 시그널 통합
     longSig_val = 1 if (touch_sma_long or touch_vwma_long or entrySmcLong) else 0
     shortSig_val = 1 if (touch_sma_short or touch_vwma_short or entrySmcShort) else 0
 
-    # 표준 카멜케이스 딕셔너리로 반환
     return {
         "tenkan": tenkan,
         "kijun": kijun,
