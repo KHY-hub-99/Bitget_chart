@@ -25,7 +25,13 @@ def main():
     macdLine, signalLine, _ = ta.macd(close, 12, 26, 9)
     rsiVal: Series[float] = ta.rsi(close, rsiLen)
     mfiVal: Series[float] = ta.mfi(close, mfiLen)
-    bbMid, bbUpper, bbLower = ta.bb(close, bbLen, bbMult)
+    bbMid: Series[float] = ta.sma(close, bbLen)
+    var_val: Series[float] = ta.variance(close, bbLen)
+    
+    safe_dev: Series[float] = math.sqrt(math.max(0.0, nz(var_val, 0.0)))
+    
+    bbUpper: Series[float] = bbMid + (safe_dev * bbMult)
+    bbLower: Series[float] = bbMid - (safe_dev * bbMult)
 
     volConfirm: Series[bool] = volume > ta.sma(volume, 20) * volMult
 

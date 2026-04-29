@@ -5,7 +5,7 @@ import {
   ColorType,
   CrosshairMode,
   LineStyle,
-  LineType, // 계단형 선을 위해 추가
+  LineType,
   CandlestickSeries,
   LineSeries,
   HistogramSeries,
@@ -13,6 +13,9 @@ import {
   ISeriesApi,
   Time,
   MouseEventParams,
+  SeriesMarker,
+  SeriesMarkerPosition,
+  SeriesMarkerShape,
 } from "lightweight-charts";
 
 interface ChartDataProps {
@@ -41,8 +44,8 @@ const TradingChart: React.FC<ChartDataProps> = ({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRefs = useRef<{ [key: string]: ISeriesApi<any> }>({});
   const priceLinesRef = useRef<any[]>([]);
-  const markersPrimitiveRef = useRef<any>(null);
-
+  // v5.2 API: 플러그인 객체 자체를 저장할 ref
+  const markersPluginRef = useRef<any>(null);
   // 범례(Legend) 상태 관리
   const [legendData, setLegendData] = useState({
     time: "",
@@ -174,7 +177,7 @@ const TradingChart: React.FC<ChartDataProps> = ({
           high: candleData.high,
           low: candleData.low,
           close: candleData.close,
-          vol: 0, // 거래량 시리즈 숨김 처리로 제거됨 (요청사항 반영)
+          vol: 0,
           swingHigh: swingData?.value || 0,
           trailingBottom: trailingData?.value || 0,
           sma224: smaData?.value || 0,
@@ -189,7 +192,7 @@ const TradingChart: React.FC<ChartDataProps> = ({
     return () => chart.remove();
   }, [symbol]);
 
-  // 2. 데이터 업데이트 및 마커 렌더링
+  // 2. 데이터 업데이트 및 마커 렌더링 (v5.2 플러그인 로직)
   useEffect(() => {
     const s = seriesRefs.current;
     if (!data || !s || !s.candle) return;
@@ -211,49 +214,61 @@ const TradingChart: React.FC<ChartDataProps> = ({
       });
     }
 
-    if (markersPrimitiveRef.current) {
-      s.candle.detachPrimitive(markersPrimitiveRef.current);
-      markersPrimitiveRef.current = null;
-    }
+    // --- [마커 로직 개편: createSeriesMarkers API 사용] ---
+    if (settings.signals && data.markers && data.markers.length > 0) {
+      const formattedMarkers: SeriesMarker<Time>[] = data.markers.map(
+        (m: any) => {
+          let color = "";
+          let shape: SeriesMarkerShape = "circle";
+          let text = "";
+          let position: SeriesMarkerPosition = "inBar";
 
-    if (settings.signals && data.markers) {
-      const formattedMarkers = data.markers.map((m: any) => {
-        let color = "";
-        let shape: any = "circle";
-        let text = "";
+          if (m.text === "topDiamond") {
+            color = "#f6465d";
+            shape = "square";
+            position = "aboveBar"; // TP (고점)이므로 캔들 위
+          } else if (m.text === "bottomDiamond") {
+            color = "#2ebd85";
+            shape = "square";
+            position = "belowBar"; // TP (저점)이므로 캔들 아래
+          } else if (m.text.includes("longSig")) {
+            color = "#2ebd85";
+            shape = "arrowUp";
+            text = m.text.includes("Rule1") ? "SMA/VWMA" : "SMC";
+            position = "belowBar"; // 롱 진입이므로 캔들 아래
+          } else if (m.text.includes("shortSig")) {
+            color = "#f6465d";
+            shape = "arrowDown";
+            text = m.text.includes("Rule1") ? "SMA/VWMA" : "SMC";
+            position = "aboveBar"; // 숏 진입이므로 캔들 위
+          }
 
-        // 룰 및 표식 판별
-        if (m.text === "topDiamond") {
-          color = "#f6465d"; // 빨간 사각
-          shape = "square";
-          text = ""; // 텍스트 표시 없음
-        } else if (m.text === "bottomDiamond") {
-          color = "#2ebd85"; // 초록 사각
-          shape = "square";
-          text = ""; // 텍스트 표시 없음
-        } else if (m.text.includes("longSig")) {
-          color = "#2ebd85";
-          shape = "arrowUp";
-          text = m.text.includes("Rule1") ? "SMA/VWMA" : "SMC";
-        } else if (m.text.includes("shortSig")) {
-          color = "#f6465d";
-          shape = "arrowDown";
-          text = m.text.includes("Rule1") ? "SMA/VWMA" : "SMC";
-        }
+          return {
+            time: m.time as Time,
+            position: m.position || position, // 백엔드 값이 없으면 보정값 사용
+            color: color,
+            shape: shape,
+            text: text,
+            size: 1,
+          };
+        },
+      );
 
-        return {
-          time: m.time as Time,
-          position: m.position,
-          color,
-          shape,
-          text,
-          size: 1, // 마커 사이즈
-        };
-      });
-
-      const markersPrimitive = createSeriesMarkers(s.candle, formattedMarkers);
-      s.candle.attachPrimitive(markersPrimitive);
-      markersPrimitiveRef.current = markersPrimitive;
+      if (!markersPluginRef.current) {
+        // 처음 렌더링 시 플러그인 생성 (자동으로 차트에 attach 됨)
+        markersPluginRef.current = createSeriesMarkers(
+          s.candle,
+          formattedMarkers,
+        );
+      } else {
+        // 이미 플러그인이 있다면 기존 객체에 대고 데이터만 덮어씌움
+        markersPluginRef.current.setMarkers(formattedMarkers);
+      }
+    } else {
+      // 마커를 숨겨야 하거나 데이터가 없는 경우 빈 배열로 처리
+      if (markersPluginRef.current) {
+        markersPluginRef.current.setMarkers([]);
+      }
     }
 
     // 가시성 토글
@@ -266,9 +281,44 @@ const TradingChart: React.FC<ChartDataProps> = ({
     if (s.equilibrium) s.equilibrium.applyOptions({ visible: settings.smc });
   }, [data, settings]);
 
-  // --- [실시간 포지션 라인] (이전 코드 동일) ---
+  // --- [실시간 포지션 라인] ---
   useEffect(() => {
-    /* ... (생략: 기존 activePositions 라인 그리기 로직 동일) ... */
+    const s = seriesRefs.current;
+    if (!s.candle || !chartRef.current) return;
+
+    priceLinesRef.current.forEach((l) => s.candle.removePriceLine(l));
+    priceLinesRef.current = [];
+
+    if (activePositions) {
+      activePositions.forEach((pos) => {
+        const entryPrice = pos.entry_price || pos.entryPrice;
+        const slPrice = pos.stop_loss_price || pos.slPrice;
+
+        if (entryPrice) {
+          const entryLine = s.candle.createPriceLine({
+            price: Number(entryPrice),
+            color: pos.side === "LONG" ? "#2196F3" : "#f6465d",
+            lineWidth: 2,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            title: `ENTRY ${pos.side}`,
+          });
+          priceLinesRef.current.push(entryLine);
+        }
+
+        if (slPrice) {
+          const slLine = s.candle.createPriceLine({
+            price: Number(slPrice),
+            color: "#ff9800",
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: "SL",
+          });
+          priceLinesRef.current.push(slLine);
+        }
+      });
+    }
   }, [activePositions, symbol]);
 
   return (
