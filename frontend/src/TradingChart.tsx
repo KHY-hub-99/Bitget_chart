@@ -21,13 +21,8 @@ interface ChartDataProps {
     markers: any[];
   };
   settings: {
-    ichimoku: boolean;
     whale: boolean;
     smc: boolean;
-    bollinger: boolean;
-    rsi: boolean;
-    mfi: boolean;
-    macd: boolean;
     signals: boolean;
   };
   symbol: string;
@@ -44,6 +39,7 @@ const TradingChart: React.FC<ChartDataProps> = ({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRefs = useRef<{ [key: string]: ISeriesApi<any> }>({});
   const priceLinesRef = useRef<any[]>([]);
+  const markersPrimitiveRef = useRef<any>(null);
 
   // 🕒 KST 포맷팅
   const formatKst = (timestamp: number) => {
@@ -78,7 +74,7 @@ const TradingChart: React.FC<ChartDataProps> = ({
 
     const s: { [key: string]: ISeriesApi<any> } = {};
 
-    // 1. 메인 캔들
+    // 1. 메인 캔들 및 거래량
     s.candle = chart.addSeries(CandlestickSeries, {
       upColor: "#2ebd85",
       downColor: "#f6465d",
@@ -87,54 +83,46 @@ const TradingChart: React.FC<ChartDataProps> = ({
       wickDownColor: "#f6465d",
     });
 
-    // 2. Whale 세력선 (흰색/회색)
+    s.volume = chart.addSeries(HistogramSeries, {
+      color: "rgba(146, 154, 165, 0.2)",
+      priceFormat: { type: "volume" },
+      priceScaleId: "vol",
+    });
+
+    // 2. Whale 세력선 (VWMA: 흰색 두껍게 / SMA: 회색 얇게)
     s.vwma224 = chart.addSeries(LineSeries, {
-      color: "#ffffff", // 흰색 진한 선
+      color: "#ffffff",
       lineWidth: 2,
       title: "VWMA 224",
       priceLineVisible: false,
     });
     s.sma224 = chart.addSeries(LineSeries, {
-      color: "#929aa5", // 회색 얇은 선
+      color: "#929aa5",
       lineWidth: 1,
       title: "SMA 224",
       priceLineVisible: false,
     });
 
-    // 3. SMC 구조 (Strong High 빨강 / Trailing Bottom 초록)
+    // 3. SMC 구조 (Strong High: 빨강 점선 / Trailing Bottom: 초록 점선)
     s.swingHighLevel = chart.addSeries(LineSeries, {
-      color: "#ef5350", // Strong High (빨강)
+      color: "#ef5350",
       lineWidth: 2,
       lineStyle: LineStyle.Dashed,
       priceLineVisible: true,
       title: "Strong High",
     });
     s.trailingBottom = chart.addSeries(LineSeries, {
-      color: "#26a69a", // Trailing Bottom (초록)
+      color: "#26a69a",
       lineWidth: 2,
       lineStyle: LineStyle.Dashed,
       priceLineVisible: true,
       title: "Strong Low",
     });
-    s.equilibrium = chart.addSeries(LineSeries, {
-      color: "rgba(240, 185, 11, 0.5)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Dotted,
-      title: "Equilibrium",
-    });
 
-    // 4. 보조 지표 (일단 로드는 수행)
-    s.tenkan = chart.addSeries(LineSeries, { color: "#05f1ff", lineWidth: 1 });
-    s.kijun = chart.addSeries(LineSeries, { color: "#ff3a3a", lineWidth: 1 });
-    s.rsiVal = chart.addSeries(LineSeries, {
-      color: "#9c27b0",
-      lineWidth: 1,
-      priceScaleId: "rsi",
+    // 거래량 스케일 조정 (차트 하단 10% 영역)
+    chart.priceScale("vol").applyOptions({
+      scaleMargins: { top: 0.9, bottom: 0 },
     });
-
-    chart
-      .priceScale("rsi")
-      .applyOptions({ scaleMargins: { top: 0.8, bottom: 0.05 } });
 
     chartRef.current = chart;
     seriesRefs.current = s;
@@ -142,38 +130,36 @@ const TradingChart: React.FC<ChartDataProps> = ({
     return () => chart.remove();
   }, [symbol]);
 
-  const markersPrimitiveRef = useRef<any>(null);
-
   // --- [데이터 처리 및 마커 주입] ---
   useEffect(() => {
     const s = seriesRefs.current;
     if (!data || !s || !s.candle) return;
 
-    // 1. 캔들 및 볼륨은 고정이므로 안전하게 세팅
+    // 1. 캔들 및 거래량 세팅
     if (data.candles) s.candle.setData(data.candles);
     if (data.volumes && s.volume) s.volume.setData(data.volumes);
 
-    // 2. 지표 데이터 세팅 (에러 발생 지점)
+    // 2. 핵심 지표 4개만 세팅 (방어 코드 포함)
     if (data.indicators) {
-      Object.entries(data.indicators).forEach(([key, values]) => {
-        // [핵심 수정] s[key]가 존재하는지 반드시 확인 후 setData 호출
-        if (s[key]) {
+      const coreIndicators = [
+        "vwma224",
+        "sma224",
+        "swingHighLevel",
+        "trailingBottom",
+      ];
+
+      coreIndicators.forEach((key) => {
+        if (s[key] && data.indicators[key]) {
           try {
-            s[key].setData(values || []);
+            s[key].setData(data.indicators[key] || []);
           } catch (err) {
             console.error(`Error setting data for ${key}:`, err);
           }
-        } else {
-          // 이 로그가 찍힌다면 백엔드에서는 보내는데 프론트에서 addSeries를 안 한 것임
-          console.warn(
-            `시리즈 ${key}가 차트에 등록되지 않았습니다. addSeries를 확인하세요.`,
-          );
         }
       });
     }
 
-    // [3. v5.2 전용 마커 로직] - setMarkers 대신 createSeriesMarkers 사용
-    // 기존에 붙어있던 마커 프리미티브가 있다면 먼저 떼어냄
+    // 3. [v5.2] 마커 세팅 (topDiamond, bottomDiamond 대응)
     if (markersPrimitiveRef.current) {
       s.candle.detachPrimitive(markersPrimitiveRef.current);
       markersPrimitiveRef.current = null;
@@ -181,25 +167,22 @@ const TradingChart: React.FC<ChartDataProps> = ({
 
     if (settings.signals && data.markers) {
       const formattedMarkers = data.markers.map((m: any) => {
-        let color = "#2196F3"; // 기본
+        let color = "#2196F3";
         let shape: any = "circle";
         let text = m.text;
 
-        // 사용자의 전략 컬러 및 형태 매핑
-        // TOP (빨간 다이아/원) - 롱 익절
+        // TOP (빨간 원) - 롱 익절 / 숏 타점
         if (m.text === "TOP") {
-          color = "#f6465d"; // 빨강
+          color = "#f6465d";
           shape = "circle";
           text = "TP";
         }
-        // BOTTOM (초록 다이아/원) - 숏 익절
+        // BOTTOM (초록 원) - 숏 익절 / 롱 타점
         else if (m.text === "BOTTOM") {
-          color = "#2ebd85"; // 초록
+          color = "#2ebd85";
           shape = "circle";
           text = "TP";
-        }
-        // 일반 진입 신호 처리
-        else if (m.text.includes("LONG")) {
+        } else if (m.text.includes("LONG")) {
           color = "#2ebd85";
           shape = "arrowUp";
         } else if (m.text.includes("SHORT")) {
@@ -216,19 +199,18 @@ const TradingChart: React.FC<ChartDataProps> = ({
         };
       });
 
-      // v5.2 방식: 프리미티브 생성 후 시리즈에 attach
       const markersPrimitive = createSeriesMarkers(s.candle, formattedMarkers);
       s.candle.attachPrimitive(markersPrimitive);
-
-      // 다음에 업데이트할 때 제거하기 위해 ref에 저장
       markersPrimitiveRef.current = markersPrimitive;
     }
 
-    // [4. 가시성 제어]
-    s.vwma224.applyOptions({ visible: settings.whale });
-    s.sma224.applyOptions({ visible: settings.whale });
-    s.swingHighLevel.applyOptions({ visible: settings.smc });
-    s.trailingBottom.applyOptions({ visible: settings.smc });
+    // 4. 가시성 제어 (토글 설정 반영)
+    if (s.vwma224) s.vwma224.applyOptions({ visible: settings.whale });
+    if (s.sma224) s.sma224.applyOptions({ visible: settings.whale });
+    if (s.swingHighLevel)
+      s.swingHighLevel.applyOptions({ visible: settings.smc });
+    if (s.trailingBottom)
+      s.trailingBottom.applyOptions({ visible: settings.smc });
   }, [data, settings]);
 
   // --- [실시간 포지션 라인] ---
@@ -236,7 +218,6 @@ const TradingChart: React.FC<ChartDataProps> = ({
     const s = seriesRefs.current;
     if (!s.candle || !chartRef.current) return;
 
-    // 기존 라인 제거
     priceLinesRef.current.forEach((l) => s.candle.removePriceLine(l));
     priceLinesRef.current = [];
 
