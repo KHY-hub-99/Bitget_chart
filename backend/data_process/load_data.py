@@ -61,7 +61,7 @@ class CryptoDataFeed:
                     col_type = "INTEGER" if col in ["trend", "longSig", "shortSig", "topDiamond", "bottomDiamond"] else "REAL"
                     cursor.execute(f'ALTER TABLE "{self.symbol}" ADD COLUMN "{col}" {col_type}')
 
-            # 2. ML 학습 데이터셋 테이블 (entry_ 접두사 사용)
+            # 2. ML 학습 데이터셋 테이블 (entry_ 접두사 사용 및 메타데이터 컬럼 추가)
             ml_features = ", ".join([f'"entry_{col}" REAL' for col in self.standard_cols])
             cursor.execute(f'''
                 CREATE TABLE IF NOT EXISTS ml_trading_dataset (
@@ -70,14 +70,24 @@ class CryptoDataFeed:
                     positionMode TEXT, leverage INTEGER, marginRatio REAL,
                     signalType TEXT,
                     entryOpen REAL, entryHigh REAL, entryLow REAL, entryClose REAL, entryVolume REAL,
+                    
+                    -- 동적 지표 컬럼들 (self.standard_cols 매핑)
                     {ml_features},
+                    
+                    -- [추가됨] 하이브리드 전략 판별 및 손절 태그
+                    strategyRule TEXT,
+                    slTag TEXT,
+                    appliedSlRatio REAL,
+                    
+                    -- 결과 및 통계
                     resultStatus TEXT, realizedPnl REAL, durationCandles INTEGER,
                     pyramidCount INTEGER DEFAULT 0, mddRate REAL DEFAULT 0,
+                    
                     UNIQUE(signalTime, symbol, timeframe, positionMode, leverage, marginRatio) ON CONFLICT REPLACE
                 )
             ''')
 
-            # 3. 전략 최적화 요약 테이블
+            # 3. 전략 최적화 요약 테이블 (불타기 평균 횟수 추가)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS strategy_optimization (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,6 +95,10 @@ class CryptoDataFeed:
                     totalTrades INTEGER, winTrades INTEGER, lossTrades INTEGER,
                     winRate REAL, totalPnl REAL, avgPnl REAL,
                     maxDrawdown REAL, avgDuration REAL,
+                    
+                    -- [추가됨] 불타기(피라미딩) 평균 횟수
+                    avgPyramidCount REAL, 
+                    
                     testedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(positionMode, leverage, marginRatio) ON CONFLICT REPLACE
                 )

@@ -14,7 +14,7 @@ class PositionMode(str, Enum):
 class Position(BaseModel):
     """
     격리 모드(Isolated) 포지션 모델.
-    Standard CamelCase 지표 및 n분할 진입(SMA/VWMA/SMC) 전략 추적에 최적화됨.
+    Standard CamelCase 지표 통일 기준과 하이브리드 전략(Rule 1, Rule 2) 추적에 최적화됨.
     """
     symbol: str = Field(..., description="거래 쌍 (예: BTCUSDT)")
     side: PositionSide = Field(..., description="방향 (LONG/SHORT)")
@@ -28,36 +28,53 @@ class Position(BaseModel):
     liquidation_price: Decimal = Field(default=Decimal('0.0'), description="강제 청산 가격")
     position_mode: PositionMode = Field(default=PositionMode.ONE_WAY, description="포지션 모드 (ONE_WAY 또는 HEDGE)")
     
-    # [분할 진입 상태 추적 - n분할 핵심]
+    # --- [하이브리드 전략 상태 추적 필드 (Rule 1 & Rule 2)] ---
+    
+    strategy_rule: str = Field(
+        default="RULE_1", 
+        description="현재 포지션에 적용된 전략 룰 ('RULE_1' 또는 'RULE_2')"
+    )
+    
+    # [룰 1 전용: SMA/VWMA 분할 진입 추적]
     entry_tags: List[str] = Field(
         default_factory=list, 
-        description="진입 완료된 기준선 태그 (예: ['SMA', 'VWMA']). 중복 진입 방지용"
+        description="진입 완료된 라인 태그 (예: ['sma224', 'vwma224']). 중복 진입 방지용"
+    )
+    first_entry_line_val: Optional[Decimal] = Field(
+        default=None, 
+        description="룰 1에서 1차 진입했던 선의 당시 가격. 2차 진입 시 더 유리한 위치인지(고저) 비교하기 위해 저장"
     )
     allocated_unit_margin_ratio: Decimal = Field(
         default=Decimal('0.0'), 
-        description="n분할 시 1회 진입당 사용할 증거금 비중 (예: 0.33)"
+        description="룰 1 분할 진입 시 1회 진입당 사용할 증거금 비중"
     )
 
-    # --- [Standard CamelCase 기반 전략 필드] ---
+    # [손절(SL) 상태]
+    stop_loss_price: Optional[Decimal] = Field(
+        default=None, 
+        description="룰 1: 진입가 기준 고정 15%*1.1 / 룰 2: trailingBottom(Long) 또는 swingHighLevel(Short)"
+    )
     
-    # 1. 손절 및 추적 (Trailing Extremes 연동)
-    # Long: trailingBottom(Strong/Weak Low), Short: trailingTop(Strong/Weak High)
-    stop_loss_price: Optional[Decimal] = Field(default=None, description="trailingBottom/Top 기반 손절가")
-    sl_type: Optional[str] = Field(default=None, description="현재 SL의 성격 (Strong/Weak)")
-    
-    # 2. 익절 로직 (Equilibrium 및 다이아몬드 신호)
-    entry_equilibrium: Optional[Decimal] = Field(default=None, description="진입 시점의 equilibrium 값 (50% 익절 기준)")
-    is_partial_closed: bool = Field(default=False, description="50% 부분 익절 완료 여부")
-    is_breakeven_set: bool = Field(default=False, description="부분 익절 후 손절가를 본절(entry_price)로 이동했는지 여부")
-    
-    # 3. 진입 규칙 태그 (Rule 1, 2, 3)
-    entry_rule: str = Field(default="entryVwma", description="최초 진입 규칙 (entryVwma, entrySma, entrySmc)")
+    # [룰 2 전용: 익절(TP) 및 본절 로스 추적]
+    entry_equilibrium: Optional[Decimal] = Field(
+        default=None, 
+        description="룰 2 진입 시점의 equilibrium 값 (50% 익절 기준선)"
+    )
+    is_partial_closed: bool = Field(
+        default=False, 
+        description="룰 2에서 equilibrium 또는 하/상단에 위치한 sma224/vwma224 도달로 50% 부분 익절 완료 여부"
+    )
+    is_breakeven_set: bool = Field(
+        default=False, 
+        description="부분 익절 후 남은 50% 물량의 손절가를 본절(entry_price)로 이동했는지 여부"
+    )
+    # ※ 최종 전량 익절 트리거: 엔진에서 topDiamond(Long), bottomDiamond(Short) 마커 발생 시 처리
     
     # [통계 및 분석 데이터]
     unrealized_pnl: Decimal = Field(default=Decimal('0.0'), description="수수료 반영 미실현 손익")
     max_unrealized_pnl: Decimal = Field(default=Decimal('0.0'), description="보유 중 기록한 최고 수익")
     mdd_during_trade: Decimal = Field(default=Decimal('0.0'), description="보유 중 기록한 최대 낙폭")
-    entry_time: Optional[int] = Field(default=None, description="진입 시점 (ms 단위)")
+    entry_time: Optional[int] = Field(default=None, description="최초 진입 시점 (ms 단위)")
 
     def update_state(self, current_price: Decimal, fee_rate: Decimal, slippage_rate: Decimal):
         """가격 변동에 따른 PNL 및 통계 데이터 실시간 갱신"""

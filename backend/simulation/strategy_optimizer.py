@@ -34,7 +34,7 @@ class StrategyOptimizer:
         combinations = list(itertools.product([PositionMode.ONE_WAY], leverages, marginRatios))
         self.logger(f"[INFO] {symbol} {timeframe} 시뮬레이션 시작 (조합: {len(combinations)}개)")
         
-        # 최초 진입 신호 추출
+        # 최초 진입 신호 추출 (엄격한 통일 기준: longSig, shortSig)
         signal_positions = df_sim[(df_sim['longSig'] == 1) | (df_sim['shortSig'] == 1)].index
         ml_data_batch = []
 
@@ -46,46 +46,59 @@ class StrategyOptimizer:
             signalType = "LONG" if is_long else "SHORT"
             side = PositionSide.LONG if is_long else PositionSide.SHORT
             entryPrice = Decimal(str(row['close']))
-
-            # 어떤 규칙으로 첫 진입을 했는지 태그 분석 (우선순위: SMC > SMA > VWMA)
-            if is_long:
-                if row.get('entrySmcLong') == 1:
-                    entry_tag, entry_rule = "SMC", "RULE_3_SMC"
-                elif row.get('entrySmaLong') == 1:
-                    entry_tag, entry_rule = "SMA", "RULE_2_SMA"
-                else:
-                    entry_tag, entry_rule = "VWMA", "RULE_1_VWMA"
-            else:
-                if row.get('entrySmcShort') == 1:
-                    entry_tag, entry_rule = "SMC", "RULE_3_SMC"
-                elif row.get('entrySmaShort') == 1:
-                    entry_tag, entry_rule = "SMA", "RULE_2_SMA"
-                else:
-                    entry_tag, entry_rule = "VWMA", "RULE_1_VWMA"
-
-            # SMC 타겟 및 손절 정보 (Trailing Extremes 적용)
+            
+            # --- [전략 룰 판별 로직] ---
+            vwma = Decimal(str(row.get('vwma224', 0)))
+            sma = Decimal(str(row.get('sma224', 0)))
+            lowP = Decimal(str(row['low']))
+            highP = Decimal(str(row['high']))
             eqP = Decimal(str(row.get('equilibrium', 0)))
-            trailing_sl = Decimal(str(row.get('trailingBottom' if is_long else 'trailingTop', 0)))
-            sl_type = str(row.get('bottomType' if is_long else 'topType', 'Unknown'))
+            
+            trailing_bottom = Decimal(str(row.get('trailingBottom', 0)))
+            swing_high = Decimal(str(row.get('swingHighLevel', 0)))
+
+            is_rule1 = False
+            entry_tag = ""
+            first_entry_val = None
+
+            if is_long:
+                # 롱 진입 시 저가가 VWMA 또는 SMA를 밟았는지 확인 (Rule 1)
+                if vwma > 0 and lowP <= vwma:
+                    is_rule1, entry_tag, first_entry_val = True, "VWMA", vwma
+                elif sma > 0 and lowP <= sma:
+                    is_rule1, entry_tag, first_entry_val = True, "SMA", sma
+            else:
+                # 숏 진입 시 고가가 VWMA 또는 SMA에 닿았는지 확인 (Rule 1)
+                if vwma > 0 and highP >= vwma:
+                    is_rule1, entry_tag, first_entry_val = True, "VWMA", vwma
+                elif sma > 0 and highP >= sma:
+                    is_rule1, entry_tag, first_entry_val = True, "SMA", sma
+
+            strategy_rule = "RULE_1" if is_rule1 else "RULE_2"
+            if not is_rule1:
+                entry_tag = "SMC" # 룰 2인 경우 태그를 SMC로 통일
 
             for mode, lev, mRatio in combinations:
                 wallet = Wallet(initial_balance=Decimal('10000'), position_mode=mode)
                 
-                roeSlRatio = (TARGET_ROE / Decimal(str(lev))) * SL_MULTIPLIER
-                roeSlDist = entryPrice * roeSlRatio
-                roeSlPrice = (entryPrice - roeSlDist) if is_long else (entryPrice + roeSlDist)
-
-                # 하이브리드 손절 판별: SMC 진입이면 Trailing SL (Strong/Weak) 사용, 아니면 일반 ROE 손절
-                if entry_tag == "SMC" and trailing_sl > 0:
-                    finalSl, slTag = trailing_sl, f"SMC_TRAILING_{sl_type.replace(' ', '_').upper()}"
+                # [손절(SL) 계산]
+                if strategy_rule == "RULE_1":
+                    # 룰 1: 진입가 기준 고정 15% * 1.1
+                    roeSlRatio = (TARGET_ROE / Decimal(str(lev))) * SL_MULTIPLIER
+                    roeSlDist = entryPrice * roeSlRatio
+                    finalSl = (entryPrice - roeSlDist) if is_long else (entryPrice + roeSlDist)
+                    slTag = "RULE_1_ROE"
                 else:
-                    finalSl, slTag = roeSlPrice, "RULE_1_ROE"
+                    # 룰 2: 롱은 trailingBottom, 숏은 swingHighLevel
+                    finalSl = trailing_bottom if is_long else swing_high
+                    slTag = "RULE_2_SMC_STRUCT"
 
-                # 엔진 진입 실행 (SMA/VWMA/SMC 태그를 명확히 전달)
+                # 엔진 진입 실행 (최신 엔진 파라미터 규격 준수)
                 self.engine.open_position(
                     wallet=wallet, symbol=symbol, side=side, entry_price=entryPrice,
-                    leverage=lev, margin_ratio=mRatio, sl_price=finalSl, sl_type=sl_type, equilibrium=eqP,
-                    entry_rule=entry_rule, tag=entry_tag
+                    leverage=lev, margin_ratio=mRatio, strategy_rule=strategy_rule,
+                    sl_price=finalSl, equilibrium=eqP, tag=entry_tag, 
+                    first_entry_val=first_entry_val
                 )
 
                 future_df = df_sim.iloc[pos_idx + 1 : pos_idx + 201]
@@ -107,7 +120,7 @@ class StrategyOptimizer:
                     res_list = self.engine.check_triggers(wallet, curr_data)
                     if res_list:
                         for r in res_list:
-                            # 엔진이 LADDER_MERGED_VWMA 등으로 추가 진입을 응답하면 피라미딩 카운트 증가
+                            # 엔진이 불타기(추가 진입)를 수행했을 경우 카운트
                             if "LADDER" in r['status']: pyramidCount += 1
                         if posKey not in wallet.positions:
                             resultStatus = res_list[-1]['status']
@@ -118,30 +131,35 @@ class StrategyOptimizer:
                 finalPnl = wallet.total_balance - Decimal('10000')
                 mddRate = float((minPnl / maxMargin) * 100) if maxMargin > 0 else 0.0
 
-                # ML 데이터 수집 - DB 스키마와 100% 일치 (새로운 컬럼 모두 추가됨)
+                # --- [ML 데이터 수집: 통일 컬럼(Standard CamelCase) 100% 매핑] ---
                 ml_data_batch.append({
                     "signalTime": db_time, "symbol": symbol, "timeframe": timeframe, "signalType": signalType,
                     "entryOpen": float(row['open']), "entryHigh": float(row['high']), "entryLow": float(row['low']),
-                    "entryClose": float(row['close']), "entryVolume": float(row['volume']),
+                    "entryClose": float(row['close']), "entryVolume": float(row.get('volume', 0)),
+                    
+                    # 일목균형표
                     "entryTenkan": float(row.get('tenkan', 0)), "entryKijun": float(row.get('kijun', 0)),
+                    "entrySenkouA": float(row.get('senkouA', 0)), "entrySenkouB": float(row.get('senkouB', 0)),
                     "entryCloudTop": float(row.get('cloudTop', 0)), "entryCloudBottom": float(row.get('cloudBottom', 0)),
-                    "entryRsi": float(row.get('rsi', 0)), "entryMacdLine": float(row.get('macdLine', 0)),
-                    "entrySignalLine": float(row.get('signalLine', 0)), "entryMfi": float(row.get('mfi', 0)),
+                    
+                    # 기술적 지표
+                    "entryRsiVal": float(row.get('rsiVal', 0)), "entryMfiVal": float(row.get('mfiVal', 0)),
+                    "entryMacdLine": float(row.get('macdLine', 0)), "entrySignalLine": float(row.get('signalLine', 0)),
+                    "entryBbLower": float(row.get('bbLower', 0)), "entryBbMid": float(row.get('bbMid', 0)), "entryBbUpper": float(row.get('bbUpper', 0)),
+                    
+                    # Whale
                     "entrySma224": float(row.get('sma224', 0)), "entryVwma224": float(row.get('vwma224', 0)),
-                    "entrySwingHighLevel": float(row.get('swingHighLevel', 0)), "entrySwingLowLevel": float(row.get('swingLowLevel', 0)), 
+                    
+                    # SMC 구조
+                    "entrySwingHighLevel": float(row.get('swingHighLevel', 0)), 
+                    "entryTrailingBottom": float(row.get('trailingBottom', 0)), 
                     "entryEquilibrium": float(eqP),
                     
-                    # 추적 스윙 및 구조 피처 
+                    # 트렌드 및 전략 메타데이터
                     "entryTrend": int(row.get('trend', 0)),
-                    "entryTrailingTop": float(row.get('trailingTop', 0)),
-                    "entryTrailingBottom": float(row.get('trailingBottom', 0)),
-                    "entryTopType": str(row.get('topType', '')),
-                    "entryBottomType": str(row.get('bottomType', '')),
-
-                    # 하이브리드 진입 규칙
-                    "entryVwmaLong": int(row.get('entryVwmaLong', 0)), "entrySmaLong": int(row.get('entrySmaLong', 0)), "entrySmcLong": int(row.get('entrySmcLong', 0)),
-                    "entryVwmaShort": int(row.get('entryVwmaShort', 0)), "entrySmaShort": int(row.get('entrySmaShort', 0)), "entrySmcShort": int(row.get('entrySmcShort', 0)),
+                    "strategyRule": strategy_rule,
                     
+                    # 결과 및 통계 파라미터
                     "positionMode": mode.value, "leverage": lev, "marginRatio": float(mRatio),
                     "appliedSlRatio": float(abs(finalSl - entryPrice) / entryPrice) if entryPrice > 0 else 0, 
                     "slTag": slTag,

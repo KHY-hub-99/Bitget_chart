@@ -17,9 +17,9 @@ class SimulationEngine:
             return entry_price * (Decimal('1') + (Decimal('1') / lev) - self.mmr)
 
     def open_position(self, wallet: Wallet, symbol: str, side: PositionSide, entry_price: Decimal, 
-                    leverage: int, margin_ratio: Decimal, sl_price: Optional[Decimal] = None, 
-                    sl_type: Optional[str] = None, equilibrium: Optional[Decimal] = None, 
-                    entry_rule: str = "entryVwma", tag: str = ""):
+                    leverage: int, margin_ratio: Decimal, strategy_rule: str = "RULE_1",
+                    sl_price: Optional[Decimal] = None, equilibrium: Optional[Decimal] = None, 
+                    tag: str = "", first_entry_val: Optional[Decimal] = None):
         """
         신규 진입 및 추가 분할 진입(Scaling-in)을 통합 관리합니다.
         """
@@ -29,7 +29,7 @@ class SimulationEngine:
         actual_margin = wallet.available_balance * margin_ratio 
         new_size = (actual_margin * Decimal(str(leverage))) / actual_entry
 
-        # 스마트 블로킹 로직
+        # 스마트 블로킹 로직 (불타기 / 2차 진입)
         if pos_key in wallet.positions:
             pos = wallet.positions[pos_key]
             
@@ -38,13 +38,11 @@ class SimulationEngine:
                 return {"status": "SKIPPED_ALREADY_TAGGED", "tag": tag}
             
             # 2. 새로운 기준선(태그)이라면 '불타기(Scaling-in)' 실행
-            # 새로운 평단가 계산 (가중 평균)
             total_size = pos.size + new_size
             pos.entry_price = ((pos.size * pos.entry_price) + (new_size * actual_entry)) / total_size
             pos.size = total_size
             pos.isolated_margin += actual_margin
             
-            # 진입 기록 추가
             if tag: pos.entry_tags.append(tag)
             
             # 평단이 바뀌었으므로 청산가 재계산
@@ -57,15 +55,17 @@ class SimulationEngine:
             symbol=symbol, side=side, leverage=leverage, entry_price=actual_entry,
             size=new_size, isolated_margin=actual_margin, 
             liquidation_price=self.calculate_liq_price(side, actual_entry, leverage),
-            stop_loss_price=sl_price, sl_type=sl_type,
-            entry_equilibrium=equilibrium, entry_rule=entry_rule,
-            allocated_unit_margin_ratio=margin_ratio # 다음 분할 진입 시 사용할 비중 저장
+            strategy_rule=strategy_rule,
+            stop_loss_price=sl_price, 
+            entry_equilibrium=equilibrium, 
+            first_entry_line_val=first_entry_val,
+            allocated_unit_margin_ratio=margin_ratio # 다음 분할 진입 시 사용할 비중
         )
         if tag: new_pos.entry_tags.append(tag)
         
         wallet.positions[pos_key] = new_pos
         wallet.sync()
-        return {"status": "NEW_ENTRY", "entry_price": actual_entry}
+        return {"status": "NEW_ENTRY", "entry_price": actual_entry, "rule": strategy_rule}
 
     def check_triggers(self, wallet: Wallet, current_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """시뮬전략.txt의 지표 기반 익절/손절/청산 로직을 체크합니다."""
@@ -74,51 +74,49 @@ class SimulationEngine:
         high_price = Decimal(str(current_data['high']))
         low_price = Decimal(str(current_data['low']))
         
-        # 역추세 다이아몬드 신호 추출 (Standard CamelCase 기준)
+        # 최신 Standard CamelCase 컬럼명 기준 추출
         vwma = Decimal(str(current_data.get('vwma224', 0)))
         sma = Decimal(str(current_data.get('sma224', 0)))
-        is_top = current_data.get('TOP') == 1       # 빨간다이아 (롱 종료)
-        is_bottom = current_data.get('BOTTOM') == 1 # 초록다이아 (숏 종료)
+        is_top = current_data.get('topDiamond') == 1       # 빨간다이아 (롱 종료)
+        is_bottom = current_data.get('bottomDiamond') == 1 # 초록다이아 (숏 종료)
 
         for pos_key, pos in list(wallet.positions.items()):
-            # 최신 모델에 맞춰 미실현 손익 업데이트 함수명 변경 (update_pnl -> update_state)
             pos.update_state(curr_price, self.fee_rate, self.slippage_rate) 
             
-            # --- [핵심: n분할 추가 진입 로직 (Laddering)] ---
-            if pos.side == PositionSide.LONG:
-                # 1. SMA로 시작했고, VWMA가 더 위에(유리한 지지) 있는데 닿았을 때
-                if "SMA" in pos.entry_tags and "VWMA" not in pos.entry_tags:
-                    if vwma > sma and low_price <= vwma:
-                        self.open_position(wallet, pos.symbol, pos.side, vwma, pos.leverage, pos.allocated_unit_margin_ratio, tag="VWMA")
-                        results.append({"status": "LADDER_LONG_VWMA", "price": vwma})
-                
-                # 2. VWMA로 시작했고, SMA가 더 위에 있는데 닿았을 때
-                elif "VWMA" in pos.entry_tags and "SMA" not in pos.entry_tags:
-                    if sma > vwma and low_price <= sma:
-                        self.open_position(wallet, pos.symbol, pos.side, sma, pos.leverage, pos.allocated_unit_margin_ratio, tag="SMA")
-                        results.append({"status": "LADDER_LONG_SMA", "price": sma})
+            # [룰 1 전용] 분할 추가 진입 로직 (Laddering) - 평단가 유리할 때만
+            if pos.strategy_rule == "RULE_1" and pos.first_entry_line_val is not None:
+                if pos.side == PositionSide.LONG:
+                    # SMA 진입 후 VWMA가 '더 아래에' 있고 닿았을 때
+                    if "SMA" in pos.entry_tags and "VWMA" not in pos.entry_tags:
+                        if 0 < vwma < pos.first_entry_line_val and low_price <= vwma:
+                            self.open_position(wallet, pos.symbol, pos.side, vwma, pos.leverage, pos.allocated_unit_margin_ratio, tag="VWMA")
+                            results.append({"status": "LADDER_LONG_VWMA", "price": vwma})
+                    # VWMA 진입 후 SMA가 '더 아래에' 있고 닿았을 때
+                    elif "VWMA" in pos.entry_tags and "SMA" not in pos.entry_tags:
+                        if 0 < sma < pos.first_entry_line_val and low_price <= sma:
+                            self.open_position(wallet, pos.symbol, pos.side, sma, pos.leverage, pos.allocated_unit_margin_ratio, tag="SMA")
+                            results.append({"status": "LADDER_LONG_SMA", "price": sma})
 
-            elif pos.side == PositionSide.SHORT:
-                # 1. SMA로 시작했고, VWMA가 더 아래에(유리한 저항) 있는데 닿았을 때
-                if "SMA" in pos.entry_tags and "VWMA" not in pos.entry_tags:
-                    if vwma < sma and high_price >= vwma:
-                        self.open_position(wallet, pos.symbol, pos.side, vwma, pos.leverage, pos.allocated_unit_margin_ratio, tag="VWMA")
-                        results.append({"status": "LADDER_SHORT_VWMA", "price": vwma})
-                
-                # 2. VWMA로 시작했고, SMA가 더 아래에 있는데 닿았을 때
-                elif "VWMA" in pos.entry_tags and "SMA" not in pos.entry_tags:
-                    if sma < vwma and high_price >= sma:
-                        self.open_position(wallet, pos.symbol, pos.side, sma, pos.leverage, pos.allocated_unit_margin_ratio, tag="SMA")
-                        results.append({"status": "LADDER_SHORT_SMA", "price": sma})
+                elif pos.side == PositionSide.SHORT:
+                    # SMA 진입 후 VWMA가 '더 위에' 있고 닿았을 때
+                    if "SMA" in pos.entry_tags and "VWMA" not in pos.entry_tags:
+                        if vwma > pos.first_entry_line_val and high_price >= vwma:
+                            self.open_position(wallet, pos.symbol, pos.side, vwma, pos.leverage, pos.allocated_unit_margin_ratio, tag="VWMA")
+                            results.append({"status": "LADDER_SHORT_VWMA", "price": vwma})
+                    # VWMA 진입 후 SMA가 '더 위에' 있고 닿았을 때
+                    elif "VWMA" in pos.entry_tags and "SMA" not in pos.entry_tags:
+                        if sma > pos.first_entry_line_val and high_price >= sma:
+                            self.open_position(wallet, pos.symbol, pos.side, sma, pos.leverage, pos.allocated_unit_margin_ratio, tag="SMA")
+                            results.append({"status": "LADDER_SHORT_SMA", "price": sma})
 
-            # --- [1. 청산 체크] ---
+            # --- [공통: 청산 체크] ---
             is_liq = (pos.side == PositionSide.LONG and low_price <= pos.liquidation_price) or \
                     (pos.side == PositionSide.SHORT and high_price >= pos.liquidation_price)
             if is_liq:
                 results.append(self._execute_liquidation(wallet, pos_key))
                 continue
 
-            # --- [2. 손절 체크 (Trailing Bottom/Top 기준)] ---
+            # --- [공통: 손절 체크] ---
             if pos.stop_loss_price:
                 is_sl = (pos.side == PositionSide.LONG and low_price <= pos.stop_loss_price) or \
                         (pos.side == PositionSide.SHORT and high_price >= pos.stop_loss_price)
@@ -127,15 +125,35 @@ class SimulationEngine:
                     results.append(self._close_all(wallet, pos_key, pos.stop_loss_price, reason))
                     continue
 
-            # --- [3. 50% 분할 익절 로직 (Equilibrium)] ---
-            if not pos.is_partial_closed and pos.entry_equilibrium:
-                is_partial = (pos.side == PositionSide.LONG and high_price >= pos.entry_equilibrium) or \
-                            (pos.side == PositionSide.SHORT and low_price <= pos.entry_equilibrium)
+            # [룰 2 전용] 50% 동적 선익절 로직 (Equilibrium vs SMA/VWMA)
+            if pos.strategy_rule == "RULE_2" and not pos.is_partial_closed and pos.entry_equilibrium:
+                eq = pos.entry_equilibrium
+                is_partial = False
+                tp_trigger_price = eq
+                
+                if pos.side == PositionSide.LONG:
+                    # VWMA나 SMA가 equilibrium보다 아래에 있다면 먼저 터치될 때 50% 익절
+                    if 0 < vwma < eq and high_price >= vwma:
+                        is_partial, tp_trigger_price = True, vwma
+                    elif 0 < sma < eq and high_price >= sma:
+                        is_partial, tp_trigger_price = True, sma
+                    elif high_price >= eq:
+                        is_partial, tp_trigger_price = True, eq
+                
+                elif pos.side == PositionSide.SHORT:
+                    # VWMA나 SMA가 equilibrium보다 위에 있다면 먼저 터치될 때 50% 익절
+                    if vwma > eq and low_price <= vwma:
+                        is_partial, tp_trigger_price = True, vwma
+                    elif sma > eq and low_price <= sma:
+                        is_partial, tp_trigger_price = True, sma
+                    elif low_price <= eq:
+                        is_partial, tp_trigger_price = True, eq
+
                 if is_partial:
-                    results.append(self._execute_partial_tp(wallet, pos_key, pos.entry_equilibrium))
+                    results.append(self._execute_partial_tp(wallet, pos_key, tp_trigger_price))
                     continue 
 
-            # --- [4. 최종 전량 익절 (다이아몬드)] ---
+            # --- [공통: 최종 전량 익절 (다이아몬드)] ---
             if (pos.side == PositionSide.LONG and is_top) or (pos.side == PositionSide.SHORT and is_bottom):
                 results.append(self._close_all(wallet, pos_key, curr_price, "TAKE_PROFIT_DIAMOND"))
 
@@ -157,10 +175,10 @@ class SimulationEngine:
         # [본절 로스 셋팅]
         pos.stop_loss_price = pos.entry_price 
         pos.is_partial_closed = True 
-        pos.is_breakeven_set = True # 모델 필드 반영
+        pos.is_breakeven_set = True
         
         wallet.sync() 
-        return {"status": "PARTIAL_TP_EQUILIBRIUM", "pnl": realized, "price": price}
+        return {"status": "PARTIAL_TP", "pnl": realized, "price": price}
     
     def _close_all(self, wallet: Wallet, pos_key: str, price: Decimal, reason: str) -> Dict[str, Any]:
         """포지션을 전량 종료하고 최종 수익을 정산합니다."""
