@@ -26,8 +26,11 @@ interface ChartDataProps {
     markers: any[]; // 백엔드 통일명칭: 'topDiamond', 'bottomDiamond', 'longSig_Rule1', 'longSig_Rule2' 등
   };
   settings: {
-    whale: boolean;
-    smc: boolean;
+    vwma224: boolean;
+    sma224: boolean;
+    swingHighLevel: boolean;
+    trailingBottom: boolean;
+    equilibrium: boolean;
     signals: boolean;
   };
   symbol: string;
@@ -58,6 +61,7 @@ const TradingChart: React.FC<ChartDataProps> = ({
     trailingBottom: 0,
     sma224: 0,
     vwma224: 0,
+    equilibrium: 0,
   });
 
   // KST 시간 포맷터 (YYYY-MM-DD HH:mm)
@@ -165,10 +169,12 @@ const TradingChart: React.FC<ChartDataProps> = ({
       }
 
       const candleData: any = param.seriesData.get(s.candle);
+      const volumeData: any = param.seriesData.get(s.volume);
       const smaData: any = param.seriesData.get(s.sma224);
       const vwmaData: any = param.seriesData.get(s.vwma224);
       const swingData: any = param.seriesData.get(s.swingHighLevel);
       const trailingData: any = param.seriesData.get(s.trailingBottom);
+      const equilibriumData: any = param.seriesData.get(s.equilibrium);
 
       if (candleData) {
         setLegendData({
@@ -177,11 +183,12 @@ const TradingChart: React.FC<ChartDataProps> = ({
           high: candleData.high,
           low: candleData.low,
           close: candleData.close,
-          vol: 0,
+          vol: volumeData?.value || 0,
           swingHigh: swingData?.value || 0,
           trailingBottom: trailingData?.value || 0,
           sma224: smaData?.value || 0,
           vwma224: vwmaData?.value || 0,
+          equilibrium: equilibriumData?.value || 0,
         });
       }
     });
@@ -272,13 +279,14 @@ const TradingChart: React.FC<ChartDataProps> = ({
     }
 
     // 가시성 토글
-    if (s.vwma224) s.vwma224.applyOptions({ visible: settings.whale });
-    if (s.sma224) s.sma224.applyOptions({ visible: settings.whale });
+    if (s.vwma224) s.vwma224.applyOptions({ visible: settings.vwma224 });
+    if (s.sma224) s.sma224.applyOptions({ visible: settings.sma224 });
     if (s.swingHighLevel)
-      s.swingHighLevel.applyOptions({ visible: settings.smc });
+      s.swingHighLevel.applyOptions({ visible: settings.swingHighLevel });
     if (s.trailingBottom)
-      s.trailingBottom.applyOptions({ visible: settings.smc });
-    if (s.equilibrium) s.equilibrium.applyOptions({ visible: settings.smc });
+      s.trailingBottom.applyOptions({ visible: settings.trailingBottom });
+    if (s.equilibrium)
+      s.equilibrium.applyOptions({ visible: settings.equilibrium });
   }, [data, settings]);
 
   // --- [실시간 포지션 라인] ---
@@ -321,55 +329,138 @@ const TradingChart: React.FC<ChartDataProps> = ({
     }
   }, [activePositions, symbol]);
 
+  // 거래량(Volume) K, M 축약 포맷터
+  const formatVolume = (vol: number) => {
+    if (vol >= 1000000) {
+      return (vol / 1000000).toFixed(2) + "M";
+    } else if (vol >= 1000) {
+      return (vol / 1000).toFixed(2) + "K";
+    }
+    return vol.toFixed(2);
+  };
+
   return (
     <div style={{ position: "relative", width: "100%", height: "650px" }}>
       {/* 커스텀 HTML 범례 (Legend) */}
       <div
         style={{
           position: "absolute",
-          top: 10,
-          left: 15,
+          top: 12,
+          left: 16,
           zIndex: 10,
-          color: "#d1d4dc",
-          fontSize: "12px",
-          fontFamily: "monospace",
+          fontFamily: "'Inter', monospace",
           pointerEvents: "none", // 범례 위에서도 마우스 드래그가 되도록 설정
+          display: "flex",
+          flexDirection: "column",
+          gap: "6px",
+          background: "rgba(11, 14, 17, 0.6)", // 캔들과 겹칠 때 가독성을 위한 반투명 배경
+          padding: "8px 12px",
+          borderRadius: "8px",
+          backdropFilter: "blur(4px)", // 배경 흐림 효과
         }}
       >
+        {/* 첫 번째 줄: 심볼 및 시간 */}
+        <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
+          <span
+            style={{
+              fontSize: "16px",
+              fontWeight: "bold",
+              color: "#ffffff",
+              letterSpacing: "0.5px",
+            }}
+          >
+            {symbol}
+          </span>
+          <span style={{ fontSize: "12px", color: "#848e9c" }}>
+            {legendData.time}
+          </span>
+        </div>
+
+        {/* 두 번째 줄: OHLCV (라벨은 회색, 값은 밝은 색으로 대비) */}
+        <div style={{ display: "flex", gap: "12px", fontSize: "12px" }}>
+          <span style={{ color: "#848e9c" }}>
+            O{" "}
+            <span style={{ color: "#d1d4dc", fontWeight: 500 }}>
+              {Number(legendData.open).toFixed(2)}
+            </span>
+          </span>
+          <span style={{ color: "#848e9c" }}>
+            H{" "}
+            <span style={{ color: "#d1d4dc", fontWeight: 500 }}>
+              {Number(legendData.high).toFixed(2)}
+            </span>
+          </span>
+          <span style={{ color: "#848e9c" }}>
+            L{" "}
+            <span style={{ color: "#d1d4dc", fontWeight: 500 }}>
+              {Number(legendData.low).toFixed(2)}
+            </span>
+          </span>
+          <span style={{ color: "#848e9c" }}>
+            C{" "}
+            <span style={{ color: "#d1d4dc", fontWeight: 500 }}>
+              {Number(legendData.close).toFixed(2)}
+            </span>
+          </span>
+          <span style={{ color: "#848e9c" }}>
+            V{" "}
+            <span style={{ color: "#d1d4dc", fontWeight: 500 }}>
+              {formatVolume(legendData.vol)}
+            </span>
+          </span>
+        </div>
+
+        {/* 세 번째 줄: 보조지표 (개별 토글 설정 연동 및 안전한 소수점 처리) */}
         <div
-          style={{ fontSize: "14px", fontWeight: "bold", marginBottom: "4px" }}
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "14px",
+            fontSize: "12px",
+            marginTop: "2px",
+          }}
         >
-          {symbol}
+          {settings.sma224 && (
+            <span style={{ color: "#929aa5", fontWeight: 600 }}>
+              SMA 224{" "}
+              <span style={{ color: "#ffffff", fontWeight: 400 }}>
+                {Number(legendData.sma224).toFixed(2)}
+              </span>
+            </span>
+          )}
+          {settings.vwma224 && (
+            <span style={{ color: "#ffffff", fontWeight: 600 }}>
+              VWMA 224{" "}
+              <span style={{ color: "#ffffff", fontWeight: 400 }}>
+                {Number(legendData.vwma224).toFixed(2)}
+              </span>
+            </span>
+          )}
+          {settings.swingHighLevel && (
+            <span style={{ color: "rgba(246, 70, 93, 0.9)", fontWeight: 600 }}>
+              Strong High{" "}
+              <span style={{ color: "#ffffff", fontWeight: 400 }}>
+                {Number(legendData.swingHigh).toFixed(2)}
+              </span>
+            </span>
+          )}
+          {settings.trailingBottom && (
+            <span style={{ color: "rgba(46, 189, 133, 0.9)", fontWeight: 600 }}>
+              Strong Low{" "}
+              <span style={{ color: "#ffffff", fontWeight: 400 }}>
+                {Number(legendData.trailingBottom).toFixed(2)}
+              </span>
+            </span>
+          )}
+          {settings.equilibrium && (
+            <span style={{ color: "rgba(240, 185, 11, 0.9)", fontWeight: 600 }}>
+              Eq{" "}
+              <span style={{ color: "#ffffff", fontWeight: 400 }}>
+                {Number(legendData.equilibrium).toFixed(2)}
+              </span>
+            </span>
+          )}
         </div>
-        <div>{legendData.time}</div>
-        <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
-          <span>O: {legendData.open}</span>
-          <span>H: {legendData.high}</span>
-          <span>L: {legendData.low}</span>
-          <span>C: {legendData.close}</span>
-        </div>
-
-        {settings.whale && (
-          <div style={{ display: "flex", gap: "12px", marginTop: "4px" }}>
-            <span style={{ color: "#929aa5" }}>
-              SMA: {legendData.sma224.toFixed(2)}
-            </span>
-            <span style={{ color: "#ffffff" }}>
-              VWMA: {legendData.vwma224.toFixed(2)}
-            </span>
-          </div>
-        )}
-
-        {settings.smc && (
-          <div style={{ display: "flex", gap: "12px", marginTop: "4px" }}>
-            <span style={{ color: "rgba(246, 70, 93, 0.8)" }}>
-              Strong High: {legendData.swingHigh.toFixed(2)}
-            </span>
-            <span style={{ color: "rgba(46, 189, 133, 0.8)" }}>
-              Strong Low: {legendData.trailingBottom.toFixed(2)}
-            </span>
-          </div>
-        )}
       </div>
 
       {/* 차트 컨테이너 */}

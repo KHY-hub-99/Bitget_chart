@@ -116,26 +116,58 @@ function App() {
           setChartData((prev: any) => {
             if (!newData || !newData.candles || newData.candles.length === 0)
               return prev;
+
+            // 1. 초기 데이터가 없거나 심볼이 바뀌었을 때 (통으로 교체)
             if (!prev || prev.symbol !== symbol) return { ...newData, symbol };
 
-            const mergeByTime = (prevArr: any[], nextArr: any[]) => {
-              const map = new Map();
-              (prevArr || []).forEach((item) => map.set(item.time, item));
-              (nextArr || []).forEach((item) => map.set(item.time, item));
-              return Array.from(map.values()).sort((a, b) => a.time - b.time);
+            // 2. 범용 업데이트 함수 (성능 최적화 버전)
+            const updateArr = (prevArr: any[], nextArr: any[]) => {
+              if (!nextArr || nextArr.length === 0) return prevArr;
+
+              // 복사본 생성 (불변성 유지)
+              let updated = [...(prevArr || [])];
+
+              nextArr.forEach((newVal) => {
+                // 가장 마지막 데이터와 시간이 같은지 확인 (대부분의 실시간 틱은 마지막 캔들 업데이트임)
+                const lastIdx = updated.length - 1;
+
+                if (lastIdx >= 0 && updated[lastIdx].time === newVal.time) {
+                  // [업데이트] 시간이 같으면 기존 캔들을 새로운 틱 데이터로 교체
+                  updated[lastIdx] = newVal;
+                } else if (
+                  lastIdx >= 0 &&
+                  updated[lastIdx].time < newVal.time
+                ) {
+                  // [추가] 새로운 시간이 들어오면 뒤에 붙임
+                  updated.push(newVal);
+                } else {
+                  // [예외] 과거 데이터가 들어올 경우에만 Map/Sort 사용 (드문 케이스)
+                  const map = new Map(updated.map((item) => [item.time, item]));
+                  map.set(newVal.time, newVal);
+                  updated = Array.from(map.values()).sort(
+                    (a, b) => a.time - b.time,
+                  );
+                }
+              });
+
+              // 차트 성능을 위해 최대 캔들 수 제한 (예: 5000개)
+              return updated.slice(-5000);
             };
 
-            const mergedCandles = mergeByTime(prev.candles, newData.candles);
+            // 3. 각 레이어별 병합 실행
+            const mergedCandles = updateArr(prev.candles, newData.candles);
+
             const mergedIndicators = { ...prev.indicators };
             if (newData.indicators) {
               Object.keys(newData.indicators).forEach((key) => {
-                mergedIndicators[key] = mergeByTime(
+                mergedIndicators[key] = updateArr(
                   prev.indicators?.[key] || [],
                   newData.indicators[key] || [],
                 );
               });
             }
-            const mergedMarkers = mergeByTime(
+
+            const mergedMarkers = updateArr(
               prev.markers || [],
               newData.markers || [],
             );
