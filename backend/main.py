@@ -139,8 +139,8 @@ def serialize_wallet(wallet: Wallet):
                 "stop_loss": float(p.stop_loss_price) if p.stop_loss_price else None,
                 "is_partial_closed": getattr(p, 'is_partial_closed', False),
                 "entry_tags": p.entry_tags,
-                "sl_type": p.sl_type,
-                "entry_rule": p.entry_rule
+                "strategy_rule": p.strategy_rule,
+                "first_entry_line_val": float(p.first_entry_line_val) if p.first_entry_line_val else None
             }
             for sym, p in wallet.positions.items()
         }
@@ -218,10 +218,10 @@ async def place_market_order(req: OrderRequest):
         entry_price=req.current_price,
         leverage=req.leverage,
         margin_ratio=Decimal(str(req.margin_ratio)),
+        strategy_rule="MANUAL",
         sl_price=req.stop_loss,
-        sl_type="MANUAL",
         equilibrium=req.take_profit,
-        entry_rule="MANUAL"
+        tag="MANUAL"
     )
     return {"message": "주문 체결 성공", "status": "success"}
 
@@ -236,10 +236,10 @@ async def close_position(symbol: str = Query(...)):
 
 @app.post("/api/simulation/tick")
 async def process_price_tick(req: TickRequest):
-    # 수동 틱에서도 엔진이 터치 여부를 판단할 수 있도록 최소한의 데이터 주입 (실제 라이브에선 DB값 연동 필요)
+    # 최신 컬럼명 기준 틱 데이터 주입
     current_data = {
         'close': req.current_price, 'high': req.current_price, 'low': req.current_price,
-        'TOP': 0, 'BOTTOM': 0, 'vwma224': req.current_price, 'sma224': req.current_price
+        'topDiamond': 0, 'bottomDiamond': 0, 'vwma224': req.current_price, 'sma224': req.current_price
     }
     
     result = sim_engine.check_triggers(sim_wallet, current_data)
@@ -258,17 +258,15 @@ async def set_position_mode(req: ModeRequest):
     return {"message": f"모드가 {req.mode}로 변경되었습니다.", "mode": req.mode}
 
 @app.post("/api/simulation/reset")
-@app.post("/api/simulation/reset")
 async def reset_simulation():
     global sim_wallet
-    # 현재 모드를 기억했다가 초기화 시 다시 부여합니다.
     current_mode = sim_wallet.position_mode 
     sim_wallet = Wallet(
         initial_balance=Decimal('10000.0'),
         total_balance=Decimal('10000.0'),
         available_balance=Decimal('10000.0'),
         frozen_margin=Decimal('0.0'),
-        position_mode=current_mode, # 모드 유지
+        position_mode=current_mode, 
         positions={}
     )
     return {"message": "시뮬레이션이 초기화되었습니다."}
@@ -314,7 +312,7 @@ async def get_history(
         feed.sync_recent_data(required_limit=fixed_limit)
         feed.load_latest_from_db(limit=fixed_limit)
     else:
-        if 'rsi' not in feed.df.columns or feed.df['rsi'].isnull().all():
+        if 'rsiVal' not in feed.df.columns or feed.df['rsiVal'].isnull().all():
             feed.refresh_indicators()
             feed.load_latest_from_db(limit=fixed_limit)
 
@@ -474,11 +472,16 @@ async def get_simulation_replay(
 
     for row in df.itertuples():
         curr_p = Decimal(str(row.close))
+        
+        # [수정포인트] 최신 컬럼명으로 통일
         curr_data = {
             'close': curr_p, 'high': Decimal(str(row.high)), 'low': Decimal(str(row.low)),
-            'TOP': getattr(row, 'TOP', 0), 'BOTTOM': getattr(row, 'BOTTOM', 0),
-            'vwma224': getattr(row, 'vwma224', 0), 'sma224': getattr(row, 'sma224', 0)
+            'topDiamond': getattr(row, 'topDiamond', 0), 
+            'bottomDiamond': getattr(row, 'bottomDiamond', 0),
+            'vwma224': getattr(row, 'vwma224', 0), 
+            'sma224': getattr(row, 'sma224', 0)
         }
+        
         ts = int(row.Index.timestamp()) if hasattr(row, 'Index') and pd.notnull(row.Index) else 0
         if not ts: continue
 
@@ -492,7 +495,7 @@ async def get_simulation_replay(
                 elif "TP" in status or "LOSS" in status or "LIQ" in status:
                     markers.append({"time": ts, "action": "SELL", "price": float(res['price']), "reason": status})
 
-        # [2] 메인 진입 시그널 감지 및 태그 부여
+        # [2] 메인 진입 시그널 감지 및 전략(Rule 1 / Rule 2) 자동 판별
         m_long = getattr(row, 'longSig', 0) == 1
         m_short = getattr(row, 'shortSig', 0) == 1
 
@@ -500,47 +503,50 @@ async def get_simulation_replay(
             side = PositionSide.LONG if m_long else PositionSide.SHORT
             action = "BUY" if side == PositionSide.LONG else "SELL"
 
-            # 진입 룰 및 태그 판별
-            if m_long:
-                if getattr(row, 'entrySmcLong', 0) == 1:
-                    entry_tag, entry_rule = "SMC", "RULE_3_SMC"
-                elif getattr(row, 'entrySmaLong', 0) == 1:
-                    entry_tag, entry_rule = "SMA", "RULE_2_SMA"
-                else:
-                    entry_tag, entry_rule = "VWMA", "RULE_1_VWMA"
-            else:
-                if getattr(row, 'entrySmcShort', 0) == 1:
-                    entry_tag, entry_rule = "SMC", "RULE_3_SMC"
-                elif getattr(row, 'entrySmaShort', 0) == 1:
-                    entry_tag, entry_rule = "SMA", "RULE_2_SMA"
-                else:
-                    entry_tag, entry_rule = "VWMA", "RULE_1_VWMA"
-
-            # 익절 및 손절가 계산
+            vwma = Decimal(str(getattr(row, 'vwma224', 0)))
+            sma = Decimal(str(getattr(row, 'sma224', 0)))
+            lowP = Decimal(str(row.low))
+            highP = Decimal(str(row.high))
             eq_val = getattr(row, 'equilibrium', 0)
             eq_p = Decimal(str(eq_val)) if pd.notna(eq_val) and eq_val > 0 else None
             
-            trailing_sl_val = getattr(row, 'trailingBottom' if m_long else 'trailingTop', 0)
-            trailing_sl = Decimal(str(trailing_sl_val)) if pd.notna(trailing_sl_val) else Decimal('0')
-            sl_type_str = str(getattr(row, 'bottomType' if m_long else 'topType', 'Unknown'))
+            trailing_bottom = Decimal(str(getattr(row, 'trailingBottom', 0)))
+            swing_high = Decimal(str(getattr(row, 'swingHighLevel', 0)))
 
-            roe_sl_ratio = (TARGET_ROE / Decimal(str(leverage))) * SL_MULTIPLIER
-            roe_sl_dist = curr_p * roe_sl_ratio
-            roe_sl_price = (curr_p - roe_sl_dist) if m_long else (curr_p + roe_sl_dist)
+            is_rule1 = False
+            entry_tag = ""
+            first_entry_val = None
 
-            if entry_tag == "SMC" and trailing_sl > 0:
-                final_sl = trailing_sl
-                sl_type = f"SMC_TRAILING_{sl_type_str.replace(' ', '_').upper()}"
+            # [수정포인트] 수학적 위치를 계산하여 이평선 터치(룰1) 여부 판별
+            if m_long:
+                if vwma > 0 and lowP <= vwma:
+                    is_rule1, entry_tag, first_entry_val = True, "VWMA", vwma
+                elif sma > 0 and lowP <= sma:
+                    is_rule1, entry_tag, first_entry_val = True, "SMA", sma
             else:
-                final_sl = roe_sl_price
-                sl_type = "RULE_1_ROE"
+                if vwma > 0 and highP >= vwma:
+                    is_rule1, entry_tag, first_entry_val = True, "VWMA", vwma
+                elif sma > 0 and highP >= sma:
+                    is_rule1, entry_tag, first_entry_val = True, "SMA", sma
 
-            # 엔진 진입 실행 (수정된 파라미터 적용)
+            strategy_rule = "RULE_1" if is_rule1 else "RULE_2"
+            if not is_rule1:
+                entry_tag = "SMC"
+
+            # [수정포인트] 룰에 따른 손절가 배정
+            if strategy_rule == "RULE_1":
+                roe_sl_ratio = (TARGET_ROE / Decimal(str(leverage))) * SL_MULTIPLIER
+                roe_sl_dist = curr_p * roe_sl_ratio
+                final_sl = (curr_p - roe_sl_dist) if m_long else (curr_p + roe_sl_dist)
+            else:
+                final_sl = trailing_bottom if m_long else swing_high
+
+            # 엔진 진입 실행 (최신 파라미터 규격 반영)
             entry_res = engine.open_position(
                 wallet=temp_wallet, symbol=symbol, side=side, entry_price=curr_p,
                 leverage=leverage, margin_ratio=m_ratio_dec,
-                sl_price=final_sl, sl_type=sl_type, equilibrium=eq_p,
-                entry_rule=entry_rule, tag=entry_tag
+                strategy_rule=strategy_rule, sl_price=final_sl, equilibrium=eq_p,
+                tag=entry_tag, first_entry_val=first_entry_val
             )
             
             markers.append({"time": ts, "action": action, "price": float(curr_p), "reason": entry_res['status']})
