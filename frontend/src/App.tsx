@@ -70,16 +70,14 @@ function App() {
     checkTickRef.current = checkTick;
   }, [checkTick]);
 
-  // [수정됨] Standard CamelCase.txt 그룹별 가시성 상태 관리
+  // [수정됨] 기획 의도에 맞게 5개 지표와 1개 시그널 토글로 세분화
   const [visibleLayers, setVisibleLayers] = useState({
-    ichimoku: true, // 일목균형표 (tenkan, kijun, senkouA, senkouB, cloudTop, cloudBottom)
-    whale: true, // Whale 세력선 (vwma224, sma224)
-    smc: true, // SMC 구조 (swingHighLevel, trailingBottom, equilibrium)
-    bollinger: false, // 기술적 지표 (bbUpper, bbMid, bbLower)
-    rsi: false, // 기술적 지표 (rsiVal)
-    mfi: false, // 기술적 지표 (mfiVal)
-    macd: false, // 기술적 지표 (macdLine, signalLine)
-    signals: true, // 시그널 및 마커 (topDiamond, bottomDiamond, trend, longSig, shortSig)
+    vwma224: true,
+    sma224: true,
+    swingHighLevel: true,
+    trailingBottom: true,
+    equilibrium: true,
+    signals: true, // 화살표, 다이아몬드 등 모든 마커 제어
   });
 
   const toggleLayer = (layer: keyof typeof visibleLayers) => {
@@ -293,16 +291,14 @@ function App() {
             {/* [수정됨] 토글 레이어 체크박스 영역 */}
             <div style={layerToggleStyle}>
               {Object.entries(visibleLayers).map(([key, isVisible]) => {
-                // UI에서 보여줄 텍스트 매핑 (직관적인 이름 유지)
+                // UI에서 보여줄 직관적인 텍스트 라벨링
                 const labelMap: Record<string, string> = {
-                  ichimoku: "ICHIMOKU",
-                  whale: "WHALE 224",
-                  smc: "SMC LEVELS",
-                  bollinger: "BOLLINGER",
-                  rsi: "RSI",
-                  mfi: "MFI",
-                  macd: "MACD",
-                  signals: "SIGNALS",
+                  sma224: "SMA 224",
+                  vwma224: "VWMA 224",
+                  swingHighLevel: "SMC High",
+                  trailingBottom: "SMC Low",
+                  equilibrium: "Equilibrium",
+                  signals: "Signals & Markers",
                 };
 
                 return (

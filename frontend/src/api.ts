@@ -48,9 +48,11 @@ export interface StrategyChartData {
   // 6. 추적 스윙 및 시장 추세
   trend?: number; // 1 (상승), -1 (하락)
 
-  // 7. 매매 조건 및 최종 확정 시그널
-  longSig?: number;
-  shortSig?: number;
+  // 7. 매매 조건 및 최종 확정 시그널 (Rule 분리 적용)
+  longSig_Rule1?: number; // SMA/VWMA 터치 기반 롱
+  shortSig_Rule1?: number; // SMA/VWMA 터치 기반 숏
+  longSig_Rule2?: number; // SMC 구조 기반 롱
+  shortSig_Rule2?: number; // SMC 구조 기반 숏
 }
 
 // --- [ 1. 차트 및 기존 데이터 관련 API ] ---

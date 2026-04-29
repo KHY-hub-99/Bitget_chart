@@ -236,10 +236,19 @@ async def close_position(symbol: str = Query(...)):
 
 @app.post("/api/simulation/tick")
 async def process_price_tick(req: TickRequest):
-    # 최신 컬럼명 기준 틱 데이터 주입
+    # [수정됨] 최신 컬럼명(Standard CamelCase) 기준 틱 데이터 주입 (엔진의 KeyError 방지)
     current_data = {
-        'close': req.current_price, 'high': req.current_price, 'low': req.current_price,
-        'topDiamond': 0, 'bottomDiamond': 0, 'vwma224': req.current_price, 'sma224': req.current_price
+        'close': req.current_price, 
+        'high': req.current_price, 
+        'low': req.current_price,
+        'vwma224': req.current_price, 
+        'sma224': req.current_price,
+        'topDiamond': 0, 
+        'bottomDiamond': 0, 
+        'longSig_Rule1': 0, 
+        'shortSig_Rule1': 0,
+        'longSig_Rule2': 0, 
+        'shortSig_Rule2': 0
     }
     
     result = sim_engine.check_triggers(sim_wallet, current_data)
