@@ -2,78 +2,51 @@
 @pyne
 """
 from pynecore import Series, Persistent
-from pynecore.lib import script, ta, math, close, high, low, open, volume, na, nz, plot, plotshape, color
+from pynecore.lib import script, ta, math, close, high, low, open, volume, na, nz
 
-# [1. Script Definition]
 @script.indicator("Master SMC Strategy", overlay=True)
 def main():
-    # --- [Parameter Settings] ---
-    tenkanLen = 9
-    kijunLen = 26
-    senkouBLen = 52
-    displacement = 26
-    rsiLen = 14
-    mfiLen = 14
-    bbLen = 20
-    bbMult = 2.2
-    volMult = 1.5
-    whaleLen = 224
-    swingsLength = 50
+    # --- [1. Parameter Settings] ---
+    tenkanLen, kijunLen, senkouBLen, displacement = 9, 26, 52, 26
+    rsiLen, mfiLen, bbLen, bbMult, volMult = 14, 14, 20, 2.2, 1.5
+    whaleLen, swingsLength, lookback = 224, 50, 3
 
     # --- [2. Indicator Calculations] ---
     tenkan: Series[float] = (ta.highest(high, tenkanLen) + ta.lowest(low, tenkanLen)) / 2
     kijun: Series[float] = (ta.highest(high, kijunLen) + ta.lowest(low, kijunLen)) / 2
-    
-    # Leading Span Calculation
     senkouA: Series[float] = (tenkan + kijun) / 2
     senkouB: Series[float] = (ta.highest(high, senkouBLen) + ta.lowest(low, senkouBLen)) / 2
-
-    # [Update] Reference series to fetch past values by displacement-1
-    # In PyneCore, Series variables allow square bracket referencing.
     cloudTop: Series[float] = math.max(senkouA[displacement-1], senkouB[displacement-1])
     cloudBottom: Series[float] = math.min(senkouA[displacement-1], senkouB[displacement-1])
 
-    # Whale 224
     sma224: Series[float] = ta.sma(close, whaleLen)
     vwma224: Series[float] = ta.vwma(close, whaleLen)
 
-    # Technical Indicators
     macdLine, signalLine, _ = ta.macd(close, 12, 26, 9)
     rsiVal: Series[float] = ta.rsi(close, rsiLen)
     mfiVal: Series[float] = ta.mfi(close, mfiLen)
     bbMid, bbUpper, bbLower = ta.bb(close, bbLen, bbMult)
-    
-    volSma = ta.sma(volume, 20)
-    volConfirm = volume > volSma * volMult
 
-    # --- [3. Signal Logic] ---
-    isLongPos: Persistent[bool] = False
-    isShortPos: Persistent[bool] = False
-    wasLongPos: Persistent[bool] = False
-    wasShortPos: Persistent[bool] = False
+    # --- [3. SMC Structure] ---
+    ph = ta.pivothigh(high, swingsLength, swingsLength)
+    pl = ta.pivotlow(low, swingsLength, swingsLength)
 
-    longCondition = ta.crossover(close, cloudTop) and macdLine > signalLine and volConfirm
-    if longCondition:
-        isLongPos = True
-        isShortPos = False
+    swingHighLevel: Persistent[float] = na
+    trailingBottom: Persistent[float] = na
+    trend: Persistent[int] = 0 
 
-    shortCondition = ta.crossunder(close, cloudBottom) and macdLine < signalLine and volConfirm
-    if shortCondition:
-        isShortPos = True
-        isLongPos = False
+    if not na(ph): swingHighLevel = ph
+    if not na(pl): trailingBottom = pl
 
-    # [Update] Persistent variables do not support [1], so using wasLongPos (previous value)
-    # This prevents duplicate signals by checking the previous bar's state
-    longSig = longCondition and (isLongPos and not wasLongPos)
-    shortSig = shortCondition and (isShortPos and not wasShortPos)
-    
-    # Store current value as previous value for the next bar
-    wasLongPos = isLongPos
-    wasShortPos = isShortPos
+    if not na(swingHighLevel): swingHighLevel = math.max(high, swingHighLevel)
+    if not na(trailingBottom): trailingBottom = math.min(low, trailingBottom)
 
-    # --- [4. Counter-trend Diamond Signal Update] ---
-    # [Update] Attaching [1] directly to ta.highest() result causes a float error.
-    # Must assign to a Series variable first before referencing [1].
+    if not na(swingHighLevel) and close > swingHighLevel: trend = 1
+    elif not na(trailingBottom) and close < trailingBottom: trend = -1
+
+    equilibrium = (nz(swingHighLevel) + nz(trailingBottom)) / 2
+
+    # --- [4. Diamond Signals (TP)] ---
     hh5: Series[float] = ta.highest(high, 5)
     ll5: Series[float] = ta.lowest(low, 5)
     rsiH5: Series[float] = ta.highest(rsiVal, 5)
@@ -81,45 +54,26 @@ def main():
 
     bearishDiv = (high > hh5[1] and rsiVal < rsiH5[1]) and rsiVal > 65
     bullishDiv = (low < ll5[1] and rsiVal > rsiL5[1]) and rsiVal < 35
-    
     extremeTop = high >= bbUpper and rsiVal > 75 and mfiVal > 80
     extremeBottom = low <= bbLower and rsiVal < 25 and mfiVal < 20
 
     topDiamond = bearishDiv or extremeTop
     bottomDiamond = bullishDiv or extremeBottom
 
-    # --- [5. SMC Structure Tracking] ---
-    ph = ta.pivothigh(high, swingsLength, swingsLength)
-    pl = ta.pivotlow(low, swingsLength, swingsLength)
+    # --- [5. Trading Logic (Rule 1 & Rule 2)] ---
+    lowest_3: Series[float] = ta.lowest(low, lookback)
+    highest_3: Series[float] = ta.highest(high, lookback)
 
-    # Declare persistent state variables
-    swingHighLevel: Persistent[float] = na
-    trailingBottom: Persistent[float] = na
-    trend: Persistent[int] = 0 # 1: Bull, -1: Bear
+    # Rule 1
+    touch_sma_long = (lowest_3[1] > sma224[1]) and (low <= sma224)
+    touch_vwma_long = (lowest_3[1] > vwma224[1]) and (low <= vwma224)
+    touch_sma_short = (highest_3[1] < sma224[1]) and (high >= sma224)
+    touch_vwma_short = (highest_3[1] < vwma224[1]) and (high >= vwma224)
 
-    # Update when pivot occurs
-    if not na(ph):
-        swingHighLevel = ph
-    if not na(pl):
-        trailingBottom = pl
+    # Rule 2
+    entrySmcLong = not na(pl)
+    entrySmcShort = not na(ph)
 
-    # Real-time Trailing expansion (when price pushes boundaries)
-    if not na(swingHighLevel):
-        swingHighLevel = math.max(high, swingHighLevel)
-    if not na(trailingBottom):
-        trailingBottom = math.min(low, trailingBottom)
-
-    # Trend determination
-    if not na(swingHighLevel) and close > swingHighLevel:
-        trend = 1
-    elif not na(trailingBottom) and close < trailingBottom:
-        trend = -1
-
-    # Equilibrium calculation (average of upper/lower levels)
-    # Use nz() to prevent errors when values are na
-    equilibrium = (nz(swingHighLevel) + nz(trailingBottom)) / 2
-
-    # --- [6. Return] ---
     return {
         "tenkan": tenkan,
         "kijun": kijun,
@@ -127,21 +81,26 @@ def main():
         "senkouB": senkouB,
         "cloudTop": cloudTop,
         "cloudBottom": cloudBottom,
+        
         "sma224": sma224,
         "vwma224": vwma224,
+        
         "rsiVal": rsiVal,
         "mfiVal": mfiVal,
         "macdLine": macdLine,
         "signalLine": signalLine,
-        "bbUpper": bbUpper,
         "bbLower": bbLower,
         "bbMid": bbMid,
-        "longSig": longSig,
-        "shortSig": shortSig,
-        "topDiamond": topDiamond,
-        "bottomDiamond": bottomDiamond,
+        "bbUpper": bbUpper,
+        
         "swingHighLevel": swingHighLevel,
         "trailingBottom": trailingBottom,
         "equilibrium": equilibrium,
-        "trend": trend
+        
+        "topDiamond": 1 if topDiamond else 0,
+        "bottomDiamond": 1 if bottomDiamond else 0,
+        "trend": trend,
+        
+        "longSig": 1 if (touch_sma_long or touch_vwma_long or entrySmcLong) else 0,
+        "shortSig": 1 if (touch_sma_short or touch_vwma_short or entrySmcShort) else 0
     }
