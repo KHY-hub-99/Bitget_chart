@@ -1,6 +1,4 @@
-"""
 @pyne
-"""
 from pynecore import Series, Persistent
 from pynecore.lib import script, ta, math, close, high, low, open, volume, na, nz
 
@@ -27,6 +25,8 @@ def main():
     mfiVal: Series[float] = ta.mfi(close, mfiLen)
     bbMid, bbUpper, bbLower = ta.bb(close, bbLen, bbMult)
 
+    volConfirm: Series[bool] = volume > ta.sma(volume, 20) * volMult
+
     # --- [3. SMC Structure] ---
     ph = ta.pivothigh(high, swingsLength, swingsLength)
     pl = ta.pivotlow(low, swingsLength, swingsLength)
@@ -35,14 +35,21 @@ def main():
     trailingBottom: Persistent[float] = na
     trend: Persistent[int] = 0 
 
-    if not na(ph): swingHighLevel = ph
-    if not na(pl): trailingBottom = pl
+    # Strong High / Strong Low
+    if not na(ph): 
+        swingHighLevel = ph
+    if not na(pl): 
+        trailingBottom = pl
 
-    if not na(swingHighLevel): swingHighLevel = math.max(high, swingHighLevel)
-    if not na(trailingBottom): trailingBottom = math.min(low, trailingBottom)
+    if not na(swingHighLevel): 
+        swingHighLevel = math.max(high, swingHighLevel)
+    if not na(trailingBottom): 
+        trailingBottom = math.min(low, trailingBottom)
 
-    if not na(swingHighLevel) and close > swingHighLevel: trend = 1
-    elif not na(trailingBottom) and close < trailingBottom: trend = -1
+    if not na(swingHighLevel) and close > swingHighLevel: 
+        trend = 1
+    elif not na(trailingBottom) and close < trailingBottom: 
+        trend = -1
 
     equilibrium = (nz(swingHighLevel) + nz(trailingBottom)) / 2
 
@@ -54,8 +61,8 @@ def main():
 
     bearishDiv = (high > hh5[1] and rsiVal < rsiH5[1]) and rsiVal > 65
     bullishDiv = (low < ll5[1] and rsiVal > rsiL5[1]) and rsiVal < 35
-    extremeTop = high >= bbUpper and rsiVal > 75 and mfiVal > 80
-    extremeBottom = low <= bbLower and rsiVal < 25 and mfiVal < 20
+    extremeTop = (high >= bbUpper) and (rsiVal > 75) and (mfiVal > 80)
+    extremeBottom = (low <= bbLower) and (rsiVal < 25) and (mfiVal < 20)
 
     topDiamond = bearishDiv or extremeTop
     bottomDiamond = bullishDiv or extremeBottom
@@ -64,16 +71,21 @@ def main():
     lowest_3: Series[float] = ta.lowest(low, lookback)
     highest_3: Series[float] = ta.highest(high, lookback)
 
-    # Rule 1
+    # rule 1: SMA/VWMA (Touch Pullback)
     touch_sma_long = (lowest_3[1] > sma224[1]) and (low <= sma224)
     touch_vwma_long = (lowest_3[1] > vwma224[1]) and (low <= vwma224)
     touch_sma_short = (highest_3[1] < sma224[1]) and (high >= sma224)
     touch_vwma_short = (highest_3[1] < vwma224[1]) and (high >= vwma224)
 
-    # Rule 2
+    # rule 2: SMC
     entrySmcLong = not na(pl)
     entrySmcShort = not na(ph)
 
+    # 최종 매매 시그널 통합
+    longSig_val = 1 if (touch_sma_long or touch_vwma_long or entrySmcLong) else 0
+    shortSig_val = 1 if (touch_sma_short or touch_vwma_short or entrySmcShort) else 0
+
+    # 표준 카멜케이스 딕셔너리로 반환
     return {
         "tenkan": tenkan,
         "kijun": kijun,
@@ -101,6 +113,6 @@ def main():
         "bottomDiamond": 1 if bottomDiamond else 0,
         "trend": trend,
         
-        "longSig": 1 if (touch_sma_long or touch_vwma_long or entrySmcLong) else 0,
-        "shortSig": 1 if (touch_sma_short or touch_vwma_short or entrySmcShort) else 0
+        "longSig": longSig_val,
+        "shortSig": shortSig_val
     }
